@@ -1,7 +1,7 @@
 use pathsearch::find_executable_in_path;
 #[allow(unused_imports)]
 use std::io::{self, Write};
-use std::{env, path::Path, process::{self, Command}};
+use std::{env, path::{PathBuf}, process::{self, Command}};
 
 const BUILTINS: [&str; 5] = ["echo", "exit", "type", "pwd", "cd"];
 
@@ -79,14 +79,22 @@ fn run_external_cmd(parts: Vec<&str>) {
         println!("{}: command not found", command);
     }
 }
-
 fn cmd_cd(args: Vec<&str>) {
-    let to_path = args[0];
-    let path = Path::new(to_path);
+    let target = if args.is_empty() {
+        "~"
+    } else {
+        args[0]
+    };
+
+    let path: PathBuf = if target == "~" {
+        PathBuf::from(env::var("HOME").unwrap())
+    } else {
+        PathBuf::from(target)
+    };
 
     if path.is_dir() {
-        env::set_current_dir(path).unwrap();
-    }else {
-        println!("cd: {}: No such file or directory", to_path)
+        env::set_current_dir(&path).unwrap();
+    } else {
+        println!("cd: {}: No such file or directory", target);
     }
 }
