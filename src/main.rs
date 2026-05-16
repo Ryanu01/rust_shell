@@ -1,7 +1,7 @@
 use pathsearch::find_executable_in_path;
 #[allow(unused_imports)]
 use std::io::{self, Write};
-use std::{env, fs::{self}, path::{PathBuf}, process::{self, Command}};
+use std::{env, fs::{self, File}, path::PathBuf, process::{self, Command, Stdio}};
 
 const BUILTINS: [&str; 5] = ["echo", "exit", "type", "pwd", "cd"];
 
@@ -42,16 +42,36 @@ fn cmd_exit() {
 }
 
 fn cmd_echo(args: Vec<&str>) {
-    if args[1] == ">" {
-        let file = args[2];
+    let mut output = Vec::new();
+    let mut redirect = None;
 
-        match fs::write(file, args[0]) {
-            Ok(()) => println!("data added"),
-            Err(e) => println!("Error, {}", e)
+    let mut i = 0;
+
+    while i < args.len() {
+        match args[i] {
+            ">" | "1>" => {
+                if i + 1 < args.len() {
+                    redirect = Some(args[i + 1]);
+                }
+                break;
+            }
+
+            arg => output.push(arg),
         }
-        
-    } else {
-        println!("{}", args.join(" "));
+
+        i += 1;
+    }
+
+    let text = output.join(" ");
+
+    match redirect {
+        Some(file) => {
+            fs::write(file, format!("{}\n", text)).unwrap();
+        }
+
+        None => {
+            println!("{}", text);
+        }
     }
 }
 
@@ -81,15 +101,45 @@ fn cmd_pwd() {
 fn run_external_cmd(parts: Vec<&str>) {
     let command = parts[0];
 
-    if find_executable_in_path(command).is_some() {
-        Command::new(command)
-        .args(&parts[1..])
-        .status()
-        .unwrap();
-    }else {
+    if find_executable_in_path(command).is_none() {
         println!("{}: command not found", command);
+        return;
     }
+
+    let mut args = Vec::new();
+    let mut output_redirect: Option<&str> = None;
+
+    let mut i = 1;
+    while i < parts.len() {
+        match parts[i] {
+            ">"| "1>" => {
+                if i + 1 < parts.len() {
+                    output_redirect = Some(parts[i + 1]);
+                }
+                break;
+            }
+            arg => args.push(arg),
+        }
+        i += 1;
+    }
+
+    let mut cmd = Command::new(command);
+    cmd.args(&args);
+
+
+    /*
+    * instead of printing output to terminal put it in some file
+    */
+    if let Some(file_name) = output_redirect {
+        let file = File::create(file_name).unwrap();
+        cmd.stdout(Stdio::from(file));
+    }
+
+    cmd.status().unwrap();
+    
 }
+
+
 fn cmd_cd(args: Vec<&str>) {
     let target = if args.is_empty() {
         "~"
