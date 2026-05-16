@@ -1,9 +1,9 @@
 use pathsearch::find_executable_in_path;
 #[allow(unused_imports)]
 use std::io::{self, Write};
-use std::process;
+use std::{env, path::Path, process::{self, Command}};
 
-const BUILTINS: [&str; 3] = ["echo", "exit", "type"];
+const BUILTINS: [&str; 5] = ["echo", "exit", "type", "pwd", "cd"];
 
 fn main() {
     loop {
@@ -18,18 +18,21 @@ fn main() {
 }
 
 fn read_input(cmd: &str) {
-    let mut parts = cmd.split_whitespace();
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
 
-    let command = match parts.next() {
-        Some(c) => c,
-        None => return,
-    };
+    if parts.is_empty() {
+        return;
+    }
+
+    let command = parts[0];
 
     match command {
         "exit" => cmd_exit(),
-        "echo" => cmd_echo(parts.collect()),
-        "type" => cmd_type(parts.collect()),
-        _ => println!("{}: command not found", cmd),
+        "echo" => cmd_echo(parts[1..].to_vec()),
+        "type" => cmd_type(parts[1..].to_vec()),
+        "pwd" => cmd_pwd(),
+        "cd" => cmd_cd(parts[1..].to_vec()),
+        _ => run_external_cmd(parts),
     }
 }
 
@@ -58,4 +61,32 @@ fn cmd_type(args: Vec<&str>) {
 
 fn is_builtin(cmd: &str) -> bool {
     BUILTINS.contains(&cmd)
+}
+
+fn cmd_pwd() {
+    println!("{}", env::current_dir().unwrap().display());
+}
+
+fn run_external_cmd(parts: Vec<&str>) {
+    let command = parts[0];
+
+    if find_executable_in_path(command).is_some() {
+        Command::new(command)
+        .args(&parts[1..])
+        .status()
+        .unwrap();
+    }else {
+        println!("{}: command not found", command);
+    }
+}
+
+fn cmd_cd(args: Vec<&str>) {
+    let to_path = args[0];
+    let path = Path::new(to_path);
+
+    if path.is_dir() {
+        env::set_current_dir(path).unwrap();
+    }else {
+        println!("cd: {}: No such file or directory", to_path)
+    }
 }
