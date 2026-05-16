@@ -1,7 +1,7 @@
 use pathsearch::find_executable_in_path;
 #[allow(unused_imports)]
 use std::io::{self, Write};
-use std::{env, path::{PathBuf}, process::{self, Command}};
+use std::{env, fs::{self}, path::{PathBuf}, process::{self, Command}};
 
 const BUILTINS: [&str; 5] = ["echo", "exit", "type", "pwd", "cd"];
 
@@ -18,21 +18,22 @@ fn main() {
 }
 
 fn read_input(cmd: &str) {
-    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    let parts= shell_words::split(cmd).unwrap();
 
-    if parts.is_empty() {
+    let slices: Vec<&str> = parts.iter().map(|s| s.as_str()).collect();
+    if slices.is_empty() {
         return;
     }
 
-    let command = parts[0];
+    let command = slices[0];
 
     match command {
         "exit" => cmd_exit(),
-        "echo" => cmd_echo(parts[1..].to_vec()),
-        "type" => cmd_type(parts[1..].to_vec()),
+        "echo" => cmd_echo(slices[1..].to_vec()),
+        "type" => cmd_type(slices[1..].to_vec()),
         "pwd" => cmd_pwd(),
-        "cd" => cmd_cd(parts[1..].to_vec()),
-        _ => run_external_cmd(parts),
+        "cd" => cmd_cd(slices[1..].to_vec()),
+        _ => run_external_cmd(slices),
     }
 }
 
@@ -41,7 +42,17 @@ fn cmd_exit() {
 }
 
 fn cmd_echo(args: Vec<&str>) {
-    println!("{}", args.join(" "));
+    if args[1] == ">" {
+        let file = args[2];
+
+        match fs::write(file, args[0]) {
+            Ok(()) => println!("data added"),
+            Err(e) => println!("Error, {}", e)
+        }
+        
+    } else {
+        println!("{}", args.join(" "));
+    }
 }
 
 fn cmd_type(args: Vec<&str>) {
