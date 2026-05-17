@@ -43,7 +43,8 @@ fn cmd_exit() {
 
 fn cmd_echo(args: Vec<&str>) {
     let mut output = Vec::new();
-    let mut redirect = None;
+    let mut stdout_redirect = None;
+    let mut stderr_redirect = None;
 
     let mut i = 0;
 
@@ -51,11 +52,19 @@ fn cmd_echo(args: Vec<&str>) {
         match args[i] {
             ">" | "1>" => {
                 if i + 1 < args.len() {
-                    redirect = Some(args[i + 1]);
+                    stdout_redirect = Some(args[i + 1]);
                 }
                 break;
             }
 
+            "2>" => {
+                if i + 1 < args.len() {
+                    stderr_redirect = Some(args[i + 1]);
+                }
+
+                i +=2;
+                continue;
+            }
             arg => output.push(arg),
         }
 
@@ -64,7 +73,11 @@ fn cmd_echo(args: Vec<&str>) {
 
     let text = output.join(" ");
 
-    match redirect {
+    if let Some(file) = stderr_redirect {
+        fs::write(file, "").unwrap();
+    }
+
+    match stdout_redirect {
         Some(file) => {
             fs::write(file, format!("{}\n", text)).unwrap();
         }
@@ -108,7 +121,7 @@ fn run_external_cmd(parts: Vec<&str>) {
 
     let mut args = Vec::new();
     let mut output_redirect: Option<&str> = None;
-
+    let mut err_redirect: Option<&str> = None;
     let mut i = 1;
     while i < parts.len() {
         match parts[i] {
@@ -117,6 +130,15 @@ fn run_external_cmd(parts: Vec<&str>) {
                     output_redirect = Some(parts[i + 1]);
                 }
                 break;
+            }
+
+            "2>" => {
+                if i + 1 < parts.len() {
+                    err_redirect = Some(parts[i+1])
+                }
+
+                i += 2;
+                continue;
             }
             arg => args.push(arg),
         }
@@ -130,6 +152,11 @@ fn run_external_cmd(parts: Vec<&str>) {
     /*
     * instead of printing output to terminal put it in some file
     */
+    if let Some(file_name) = err_redirect {
+        let file = File::create(file_name).unwrap();
+        cmd.stderr(Stdio::from(file));
+    }
+
     if let Some(file_name) = output_redirect {
         let file = File::create(file_name).unwrap();
         cmd.stdout(Stdio::from(file));
