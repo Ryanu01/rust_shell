@@ -1,7 +1,7 @@
 use pathsearch::find_executable_in_path;
 #[allow(unused_imports)]
 use std::io::{self, Write};
-use std::{env, fs::{self, File}, path::PathBuf, process::{self, Command, Stdio}};
+use std::{env, fs::{self, File, OpenOptions}, path::PathBuf, process::{self, Command, Stdio}};
 
 const BUILTINS: [&str; 5] = ["echo", "exit", "type", "pwd", "cd"];
 
@@ -45,6 +45,7 @@ fn cmd_echo(args: Vec<&str>) {
     let mut output = Vec::new();
     let mut stdout_redirect = None;
     let mut stderr_redirect = None;
+    let mut append = false;
 
     let mut i = 0;
 
@@ -65,6 +66,14 @@ fn cmd_echo(args: Vec<&str>) {
                 i +=2;
                 continue;
             }
+
+            ">>" | "1>>" => {
+                if i + 1 < args.len() {
+                    stdout_redirect = Some(args[i + 1]);
+                    append  = true;
+                }
+                break;
+            }
             arg => output.push(arg),
         }
 
@@ -77,13 +86,32 @@ fn cmd_echo(args: Vec<&str>) {
         fs::write(file, "").unwrap();
     }
 
-    match stdout_redirect {
-        Some(file) => {
-            fs::write(file, format!("{}\n", text)).unwrap();
+    if append {
+
+        match stdout_redirect {
+
+            Some(file) => {
+                let mut file_append = OpenOptions::new().create(true).append(true).open(file).unwrap();
+                file_append.write_all(format!("{}\n", text).as_bytes()).unwrap();
+            }
+
+
+            None => {
+                println!("{}", text);
+            }
         }
 
-        None => {
-            println!("{}", text);
+    } else {
+        match stdout_redirect {
+
+            Some(file) => {
+                fs::write(file, format!("{}\n", text)).unwrap();
+            }
+
+
+            None => {
+                println!("{}", text);
+            }
         }
     }
 }
@@ -113,7 +141,7 @@ fn cmd_pwd() {
 
 fn run_external_cmd(parts: Vec<&str>) {
     let command = parts[0];
-
+    let mut append = false;
     if find_executable_in_path(command).is_none() {
         println!("{}: command not found", command);
         return;
@@ -140,6 +168,15 @@ fn run_external_cmd(parts: Vec<&str>) {
                 i += 2;
                 continue;
             }
+
+            ">>" | "1>>" => {
+                if i + 1 < parts.len() {
+                    output_redirect = Some(parts[i + 1]);
+                    append = true;
+                }
+                break;
+            }
+
             arg => args.push(arg),
         }
         i += 1;
@@ -158,8 +195,17 @@ fn run_external_cmd(parts: Vec<&str>) {
     }
 
     if let Some(file_name) = output_redirect {
-        let file = File::create(file_name).unwrap();
-        cmd.stdout(Stdio::from(file));
+        let file = if append {
+            OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(file_name)
+            .unwrap()
+        }else {
+            File::create(file_name).unwrap()
+        };
+
+        cmd.stdout(Stdio::from(file));   
     }
 
     cmd.status().unwrap();
