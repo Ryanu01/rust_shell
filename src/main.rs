@@ -58,7 +58,7 @@ fn cmd_echo(args: Vec<&str>) {
                 break;
             }
 
-            "2>" => {
+            "2>" | "2>>" => {
                 if i + 1 < args.len() {
                     stderr_redirect = Some(args[i + 1]);
                 }
@@ -177,6 +177,14 @@ fn run_external_cmd(parts: Vec<&str>) {
                 break;
             }
 
+            "2>>" => {
+                if i + 1 < parts.len() {
+                    err_redirect = Some(parts[i+1])
+                }
+                append = true;
+                i += 2;
+                continue;
+            }
             arg => args.push(arg),
         }
         i += 1;
@@ -190,7 +198,15 @@ fn run_external_cmd(parts: Vec<&str>) {
     * instead of printing output to terminal put it in some file
     */
     if let Some(file_name) = err_redirect {
-        let file = File::create(file_name).unwrap();
+        let file = if append {
+            OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(file_name)
+            .unwrap()
+        } else {
+            File::create(file_name).unwrap()
+        };
         cmd.stderr(Stdio::from(file));
     }
 
