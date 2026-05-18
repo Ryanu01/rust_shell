@@ -1,4 +1,5 @@
 mod helper;
+mod utils;
 use helper::ShellCompleter;
 
 use rustyline::{error::ReadlineError, history::DefaultHistory};
@@ -17,7 +18,7 @@ fn main() {
     let mut rl = Editor::<ShellCompleter, DefaultHistory>::new().unwrap();
 
     rl.set_helper(Some(ShellCompleter {
-        last_tab: RefCell::new(false)
+        last_line: RefCell::new(String::new())
     }));
 
     loop {

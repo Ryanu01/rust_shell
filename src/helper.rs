@@ -7,8 +7,10 @@ use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Context, Helper};
 
+use crate::utils::longest_common_prefix;
+
 pub struct ShellCompleter {
-    pub last_tab: RefCell<bool>
+    pub last_line: RefCell<String>
 }
 
 impl Helper for ShellCompleter {}
@@ -47,7 +49,7 @@ impl Completer for ShellCompleter {
 
         commands.sort();
         commands.dedup();
-        
+
         let start = line[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
         let word = &line[start..pos];
         let matches: Vec<Pair> = commands
@@ -59,29 +61,44 @@ impl Completer for ShellCompleter {
         })
         .collect();
 
-    
+        let names: Vec<String> = matches.iter().map(|m| m.display.clone()).collect();
+        
+        let lcp = longest_common_prefix(&names);
+
+        if matches.len() > 1 && lcp.len() > word.len() {
+            *self.last_line.borrow_mut() =
+                format!("{}{}", &line[..start], lcp);
+
+            return Ok((
+                start,
+                vec![Pair {
+                    display: lcp.clone(),
+                    replacement: lcp,
+                }],
+            ));
+        }
 
         if matches.len() > 1 {
-            let mut last_tab = self.last_tab.borrow_mut();
+            let mut last_line = self.last_line.borrow_mut();
 
-            if !* last_tab {
+            if *last_line != line  {
 
         
                 print!("\x07");
                 std::io::Write::flush(&mut std::io::stdout()).unwrap();
 
-                *last_tab = true;
+                *last_line = line.to_string();
 
                 return Ok((start, vec![]));
             }
 
+            println!();
             
             let mut name: Vec<String> = matches.iter().map(|m| m.display.clone()).collect();
             
             name.sort();
             name.dedup();
             
-            println!();
 
             let col_width = 20;
             let cols = 6;
@@ -99,11 +116,12 @@ impl Completer for ShellCompleter {
             print!("$ {}", line);
             std::io::Write::flush(&mut std::io::stdout()).unwrap();
 
-            *last_tab = false;
+            *last_line = String::new();
 
             return Ok((start, vec![]));
         }
 
+        *self.last_line.borrow_mut() = String::new();
         
         Ok((start, matches))
     }
