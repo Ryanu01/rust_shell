@@ -7,7 +7,7 @@ use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Context, Helper};
 
-use crate::utils::longest_common_prefix;
+use crate::utils::{get_file_matches, longest_common_prefix};
 
 pub struct ShellCompleter {
     pub last_line: RefCell<String>
@@ -52,12 +52,18 @@ impl Completer for ShellCompleter {
 
         let start = line[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
         let word = &line[start..pos];
-        let matches: Vec<Pair> = commands
-        .iter()
-        .filter(|cmd| cmd.starts_with(word))
-        .map(|cmd| Pair {
-            display: cmd.to_string(),
-            replacement: format!("{} ", cmd.to_string())
+
+        let is_command = !line[..start].contains(' ');
+        let candidates: Vec<String> = if is_command {
+            commands.into_iter().filter(|cmd| cmd.starts_with(word)).collect()
+        }else {
+            get_file_matches(word)
+        };
+        
+        let matches: Vec<Pair> = candidates.iter()
+        .map(|candidate| Pair {
+            display: candidate.to_string(),
+            replacement: format!("{} ", candidate.to_string())
         })
         .collect();
 
