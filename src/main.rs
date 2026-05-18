@@ -5,6 +5,7 @@ use rustyline::{error::ReadlineError, history::DefaultHistory};
 use rustyline::Editor;
 
 use pathsearch::find_executable_in_path;
+use std::cell::RefCell;
 #[allow(unused_imports)]
 use std::io::{self, Write};
 use std::{env, fs::{self, File, OpenOptions}, path::PathBuf, process::{self, Command, Stdio}};
@@ -15,7 +16,9 @@ fn main() {
 
     let mut rl = Editor::<ShellCompleter, DefaultHistory>::new().unwrap();
 
-    rl.set_helper(Some(ShellCompleter));
+    rl.set_helper(Some(ShellCompleter {
+        last_tab: RefCell::new(false)
+    }));
 
     loop {
 
