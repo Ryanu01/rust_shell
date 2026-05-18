@@ -1,3 +1,9 @@
+mod helper;
+use helper::ShellCompleter;
+
+use rustyline::{error::ReadlineError, history::DefaultHistory};
+use rustyline::Editor;
+
 use pathsearch::find_executable_in_path;
 #[allow(unused_imports)]
 use std::io::{self, Write};
@@ -6,14 +12,31 @@ use std::{env, fs::{self, File, OpenOptions}, path::PathBuf, process::{self, Com
 const BUILTINS: [&str; 5] = ["echo", "exit", "type", "pwd", "cd"];
 
 fn main() {
+
+    let mut rl = Editor::<ShellCompleter, DefaultHistory>::new().unwrap();
+
+    rl.set_helper(Some(ShellCompleter));
+
     loop {
-        print!("$ ");
-        io::stdout().flush().unwrap();
 
-        let mut command = String::new();
-        io::stdin().read_line(&mut command).unwrap();
+        match rl.readline("$ ") {
+            Ok(line) => {
+                read_input(line.trim());
+            }
 
-        read_input(command.trim());
+            Err(ReadlineError::Interrupted) => {
+                break;
+            }
+
+            Err(ReadlineError::Eof) => {
+                break;
+            }
+
+            Err(err) => {
+                println!("Error: {:?}", err);
+                break;
+            }
+        }
     }
 }
 
