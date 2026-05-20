@@ -3,7 +3,7 @@ mod utils;
 use helper::ShellCompleter;
 
 use rustyline::{error::ReadlineError, history::DefaultHistory};
-use rustyline::Editor;
+use rustyline::{CompletionType, Config, EditMode, Editor};
 
 use pathsearch::find_executable_in_path;
 use std::cell::RefCell;
@@ -15,27 +15,25 @@ const BUILTINS: [&str; 5] = ["echo", "exit", "type", "pwd", "cd"];
 
 fn main() {
 
-    let mut rl = Editor::<ShellCompleter, DefaultHistory>::new().unwrap();
+     let config = Config::builder()
+        .completion_type(CompletionType::List)
+        .edit_mode(EditMode::Emacs)
+        .build();
+
+    let mut rl = Editor::<ShellCompleter, DefaultHistory>::with_config(config).unwrap();
+
 
     rl.set_helper(Some(ShellCompleter {
-        last_line: RefCell::new(String::new())
+        last_completed: RefCell::new(String::new()),
     }));
 
     loop {
-
         match rl.readline("$ ") {
             Ok(line) => {
                 read_input(line.trim());
             }
-
-            Err(ReadlineError::Interrupted) => {
-                break;
-            }
-
-            Err(ReadlineError::Eof) => {
-                break;
-            }
-
+            Err(ReadlineError::Interrupted) => break,
+            Err(ReadlineError::Eof) => break,
             Err(err) => {
                 println!("Error: {:?}", err);
                 break;

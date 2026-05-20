@@ -10,71 +10,99 @@ use rustyline::{Context, Helper};
 use crate::utils::{get_file_matches, longest_common_prefix};
 
 pub struct ShellCompleter {
-    pub last_line: RefCell<String>
+    pub last_completed: RefCell<String>,
 }
 
 impl Helper for ShellCompleter {}
-
 impl Hinter for ShellCompleter {
     type Hint = String;
 }
-
 impl Highlighter for ShellCompleter {}
-
 impl Validator for ShellCompleter {}
+
 impl Completer for ShellCompleter {
     type Candidate = Pair;
 
-    fn complete (
-        &self, 
-        line: &str, 
+    fn complete(
+        &self,
+        line: &str,
         pos: usize,
-        _: &Context<'_>
+        _: &Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Pair>)> {
-        let mut commands = vec!["echo".to_string(), "exit".to_string(), "type".to_string(), "pwd".to_string(), "cd".to_string()];
+        let mut commands = vec![
+            "echo".to_string(),
+            "exit".to_string(),
+            "type".to_string(),
+            "pwd".to_string(),
+            "cd".to_string(),
+        ];
 
         if let Ok(path_var) = env::var("PATH") {
             for path in env::split_paths(&path_var) {
                 if let Ok(entries) = fs::read_dir(path) {
                     for entry in entries.flatten() {
-                        let file_name = entry.file_name();
-
-                        if let Some(name) = file_name.to_str() {
+                        if let Some(name) = entry.file_name().to_str() {
                             commands.push(name.to_string());
                         }
                     }
                 }
             }
-        };
+        }
 
         commands.sort();
         commands.dedup();
 
         let start = line[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
         let word = &line[start..pos];
+        let is_command = !line[..pos].contains(' ');
 
-        let is_command = !line[..start].contains(' ');
         let candidates: Vec<String> = if is_command {
             commands.into_iter().filter(|cmd| cmd.starts_with(word)).collect()
-        }else {
+        } else {
             get_file_matches(word)
         };
-        
-        let matches: Vec<Pair> = candidates.iter()
-        .map(|candidate| Pair {
-            display: candidate.to_string(),
-            replacement: format!("{} ", candidate.to_string())
-        })
-        .collect();
+
+        let mut matches: Vec<Pair> = candidates
+            .iter()
+            .map(|c| Pair {
+                display: c.clone(),
+                replacement: if c.ends_with('/') {
+                    c.clone()
+                } else {
+                    format!("{} ", c)
+                },
+            })
+            .collect();
+
+        matches.sort_by(|a, b| a.display.cmp(&b.display));
+        matches.dedup_by(|a, b| a.display == b.display);
 
         let names: Vec<String> = matches.iter().map(|m| m.display.clone()).collect();
-        
         let lcp = longest_common_prefix(&names);
 
-        if matches.len() > 1 && lcp.len() > word.len() {
-            *self.last_line.borrow_mut() =
-                format!("{}{}", &line[..start], lcp);
+        // The line as it would appear after inserting lcp
+        let line_after_lcp = format!("{}{}", &line[..start], lcp);
 
+
+        // No matches
+        if matches.is_empty() {
+            *self.last_completed.borrow_mut() = String::new();
+            return Ok((start, vec![]));
+        }
+
+        // Single match — insert it directly
+        if matches.len() == 1 {
+            *self.last_completed.borrow_mut() = String::new();
+            return Ok((start, matches));
+        }
+
+        // Multiple matches from here down
+        let last = self.last_completed.borrow().clone();
+
+        // LCP goes further than what's typed — complete to LCP
+        // e.g. typed "tes", lcp="test/" → insert "test/"
+        if lcp.len() > word.len() {
+            *self.last_completed.borrow_mut() = line_after_lcp;
             return Ok((
                 start,
                 vec![Pair {
@@ -84,51 +112,41 @@ impl Completer for ShellCompleter {
             ));
         }
 
-        if matches.len() > 1 {
-            let mut last_line = self.last_line.borrow_mut();
+        // LCP == word (nothing further to complete)
+        // Check if previous Tab already completed to this exact point
+        // We check both the pre-insertion line AND the post-insertion line
+        // because rustyline may pass either depending on timing
+        let prev_tab_reached_here = last == line_after_lcp
+            || last == format!("{}{}", &line[..start], word);
 
-            if *last_line != line  {
-
-        
-                print!("\x07");
-                std::io::Write::flush(&mut std::io::stdout()).unwrap();
-
-                *last_line = line.to_string();
-
-                return Ok((start, vec![]));
-            }
-
+        if prev_tab_reached_here {
+            // Second Tab at same position — show list
             println!();
-            
-            let mut name: Vec<String> = matches.iter().map(|m| m.display.clone()).collect();
-            
-            name.sort();
-            name.dedup();
-            
 
             let col_width = 20;
             let cols = 6;
-
-            for (i, name) in name.iter().enumerate() {
-
+            for (i, name) in names.iter().enumerate() {
                 print!("{:<width$}", name, width = col_width);
-
                 if (i + 1) % cols == 0 {
                     println!();
                 }
             }
+            // Make sure last row ends with newline even if not full
+            if names.len() % cols != 0 {
+                println!();
+            }
 
-            println!();
             print!("$ {}", line);
             std::io::Write::flush(&mut std::io::stdout()).unwrap();
 
-            *last_line = String::new();
-
-            return Ok((start, vec![]));
+            *self.last_completed.borrow_mut() = String::new();
+        } else {
+            // First Tab at this position — bell
+            print!("\x07");
+            std::io::Write::flush(&mut std::io::stdout()).unwrap();
+            *self.last_completed.borrow_mut() = line_after_lcp;
         }
 
-        *self.last_line.borrow_mut() = String::new();
-        
-        Ok((start, matches))
+        Ok((start, vec![]))
     }
 }
