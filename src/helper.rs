@@ -54,7 +54,7 @@ impl Completer for ShellCompleter {
         }
 
         commands.sort();
-        commands.dedup();
+        commands.dedup();   
 
         let start = line[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
         let word = &line[start..pos];
@@ -64,9 +64,20 @@ impl Completer for ShellCompleter {
             commands.into_iter().filter(|cmd| cmd.starts_with(word)).collect()
         } else {
             let cmd_name = line[..pos].split_whitespace().next().unwrap_or("");
+            let prev_word = line[..start]
+                .trim()
+                .split_whitespace()
+                .last()
+                .unwrap_or("");
             let completer_path = COMPLETION_SPEC.lock().unwrap().get(cmd_name).cloned();
             match completer_path.and_then(|path| {
-                let output = Command::new(&path).output().ok()?;
+                let output = Command::new(&path)
+                    .arg(cmd_name)
+                    .arg(word)
+                    .arg(prev_word)
+                    .env("COMP_LINE", line)
+                    .env("COMP_POINT", pos.to_string())
+                    .output().ok()?;
                 if !output.status.success() {
                     return None;
                 }

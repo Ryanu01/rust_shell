@@ -73,8 +73,10 @@ fn cmd_exit() {
 
 fn cmd_complete (args: Vec<&str>) {
 
+    let mut map = COMPLETION_SPEC.lock().unwrap();
     let mut i = 0;
     let mut cmd = None;
+    let mut delete_cmd = None;
     while i < args.len() {
         match args[i] {
             "-p" => {
@@ -88,20 +90,30 @@ fn cmd_complete (args: Vec<&str>) {
             "-C" => {
                 if i + 2 < args.len() {
                     if let (Some(cmd_path), Some(cmd)) = (args.get(i+1), args.get(i+2)) {
-                        COMPLETION_SPEC.lock().unwrap().insert(cmd.to_string(), cmd_path.to_string());
+                        map.insert(cmd.to_string(), cmd_path.to_string());
                     }
                 }
                 i+=3;
                 continue;
             },
-
+            "-r" => {
+                if i + 1 < args.len() {
+                    delete_cmd = Some(args[i + 1]);
+                }
+                i+=2;
+                continue;
+            },
             _ => (),
         }
 
         i += 1;
     }
 
-    let map = COMPLETION_SPEC.lock().unwrap();
+    if let Some(cmd_name) = delete_cmd {
+        if let Some(_cmd_path) = map.get(cmd_name) {
+            map.remove(cmd_name);
+        }
+    }
 
     if let Some(cmd_name) = cmd {
         if let Some(cmd_path) = map.get(cmd_name) {
