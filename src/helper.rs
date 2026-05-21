@@ -1,5 +1,8 @@
 use std::cell::RefCell;
+use std::process::Command;
 use std::{env, fs};
+
+use crate::COMPLETION_SPEC;
 
 use rustyline::completion::{Completer, Pair};
 use rustyline::highlight::Highlighter;
@@ -60,7 +63,24 @@ impl Completer for ShellCompleter {
         let candidates: Vec<String> = if is_command {
             commands.into_iter().filter(|cmd| cmd.starts_with(word)).collect()
         } else {
-            get_file_matches(word)
+            let cmd_name = line[..pos].split_whitespace().next().unwrap_or("");
+            let completer_path = COMPLETION_SPEC.lock().unwrap().get(cmd_name).cloned();
+            match completer_path.and_then(|path| {
+                let output = Command::new(&path).output().ok()?;
+                if !output.status.success() {
+                    return None;
+                }
+                let stdout = String::from_utf8(output.stdout).ok()?;
+                let candidates: Vec<String> = stdout
+                    .lines()
+                    .map(|l| l.trim().to_string())
+                    .filter(|l| !l.is_empty() && l.starts_with(word))
+                    .collect();
+                if candidates.is_empty() { None } else { Some(candidates) }
+            }) {
+                Some(candidates) => candidates,
+                None => get_file_matches(word),
+            }
         };
 
         let mut matches: Vec<Pair> = candidates

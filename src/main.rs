@@ -15,7 +15,7 @@ use std::{env, fs::{self, File, OpenOptions}, path::PathBuf, process::{self, Com
 
 const BUILTINS: [&str; 6] = ["echo", "exit", "type", "pwd", "cd", "complete"];
 
-static COMPLETION_SPEC: LazyLock<Mutex<HashMap<String, String>>> =
+pub(crate) static COMPLETION_SPEC: LazyLock<Mutex<HashMap<String, String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 fn main() {
 
