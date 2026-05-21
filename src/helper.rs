@@ -35,6 +35,7 @@ impl Completer for ShellCompleter {
             "type".to_string(),
             "pwd".to_string(),
             "cd".to_string(),
+            "complete".to_string()
         ];
 
         if let Ok(path_var) = env::var("PATH") {

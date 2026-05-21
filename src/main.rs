@@ -7,12 +7,16 @@ use rustyline::{CompletionType, Config, EditMode, Editor};
 
 use pathsearch::find_executable_in_path;
 use std::cell::RefCell;
+use std::collections::HashMap;
 #[allow(unused_imports)]
 use std::io::{self, Write};
+use std::sync::{LazyLock, Mutex};
 use std::{env, fs::{self, File, OpenOptions}, path::PathBuf, process::{self, Command, Stdio}};
 
-const BUILTINS: [&str; 5] = ["echo", "exit", "type", "pwd", "cd"];
+const BUILTINS: [&str; 6] = ["echo", "exit", "type", "pwd", "cd", "complete"];
 
+static COMPLETION_SPEC: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 fn main() {
 
      let config = Config::builder()
@@ -58,12 +62,57 @@ fn read_input(cmd: &str) {
         "type" => cmd_type(slices[1..].to_vec()),
         "pwd" => cmd_pwd(),
         "cd" => cmd_cd(slices[1..].to_vec()),
+        "complete" => cmd_complete(slices[1..].to_vec()),
         _ => run_external_cmd(slices),
     }
 }
 
 fn cmd_exit() {
     process::exit(0);
+}
+
+fn cmd_complete (args: Vec<&str>) {
+
+    let mut i = 0;
+    let mut cmd = None;
+    while i < args.len() {
+        match args[i] {
+            "-p" => {
+                if i + 1 < args.len() {
+                    cmd = Some(args[i + 1])
+                }
+                i+=2;
+                continue;
+            },
+            
+            "-C" => {
+                if i + 2 < args.len() {
+                    if let (Some(cmd_path), Some(cmd)) = (args.get(i+1), args.get(i+2)) {
+                        COMPLETION_SPEC.lock().unwrap().insert(cmd.to_string(), cmd_path.to_string());
+                    }
+                }
+                i+=3;
+                continue;
+            },
+
+            _ => (),
+        }
+
+        i += 1;
+    }
+
+    let map = COMPLETION_SPEC.lock().unwrap();
+
+    if let Some(cmd_name) = cmd {
+        if let Some(cmd_path) = map.get(cmd_name) {
+            let stdout = format!("complete -C '{cmd_path}' {}", cmd_name);
+            println!("{}", stdout);
+        } else {
+            println!("complete: {}: no completion specification", cmd_name);
+        }
+
+    }
+ 
 }
 
 fn cmd_echo(args: Vec<&str>) {
@@ -252,6 +301,8 @@ fn run_external_cmd(parts: Vec<&str>) {
     cmd.status().unwrap();
     
 }
+
+
 
 
 fn cmd_cd(args: Vec<&str>) {
