@@ -38,7 +38,8 @@ impl Completer for ShellCompleter {
             "type".to_string(),
             "pwd".to_string(),
             "cd".to_string(),
-            "complete".to_string()
+            "complete".to_string(),
+            "jobs".to_string(),
         ];
 
         if let Ok(path_var) = env::var("PATH") {
@@ -54,21 +55,20 @@ impl Completer for ShellCompleter {
         }
 
         commands.sort();
-        commands.dedup();   
+        commands.dedup();
 
         let start = line[..pos].rfind(' ').map(|i| i + 1).unwrap_or(0);
         let word = &line[start..pos];
         let is_command = !line[..pos].contains(' ');
 
         let candidates: Vec<String> = if is_command {
-            commands.into_iter().filter(|cmd| cmd.starts_with(word)).collect()
+            commands
+                .into_iter()
+                .filter(|cmd| cmd.starts_with(word))
+                .collect()
         } else {
             let cmd_name = line[..pos].split_whitespace().next().unwrap_or("");
-            let prev_word = line[..start]
-                .trim()
-                .split_whitespace()
-                .last()
-                .unwrap_or("");
+            let prev_word = line[..start].trim().split_whitespace().last().unwrap_or("");
             let completer_path = COMPLETION_SPEC.lock().unwrap().get(cmd_name).cloned();
             match completer_path.and_then(|path| {
                 let output = Command::new(&path)
@@ -77,7 +77,8 @@ impl Completer for ShellCompleter {
                     .arg(prev_word)
                     .env("COMP_LINE", line)
                     .env("COMP_POINT", pos.to_string())
-                    .output().ok()?;
+                    .output()
+                    .ok()?;
                 if !output.status.success() {
                     return None;
                 }
@@ -87,7 +88,11 @@ impl Completer for ShellCompleter {
                     .map(|l| l.trim().to_string())
                     .filter(|l| !l.is_empty() && l.starts_with(word))
                     .collect();
-                if candidates.is_empty() { None } else { Some(candidates) }
+                if candidates.is_empty() {
+                    None
+                } else {
+                    Some(candidates)
+                }
             }) {
                 Some(candidates) => candidates,
                 None => get_file_matches(word),
@@ -114,7 +119,6 @@ impl Completer for ShellCompleter {
 
         // The line as it would appear after inserting lcp
         let line_after_lcp = format!("{}{}", &line[..start], lcp);
-
 
         // No matches
         if matches.is_empty() {
@@ -148,8 +152,8 @@ impl Completer for ShellCompleter {
         // Check if previous Tab already completed to this exact point
         // We check both the pre-insertion line AND the post-insertion line
         // because rustyline may pass either depending on timing
-        let prev_tab_reached_here = last == line_after_lcp
-            || last == format!("{}{}", &line[..start], word);
+        let prev_tab_reached_here =
+            last == line_after_lcp || last == format!("{}{}", &line[..start], word);
 
         if prev_tab_reached_here {
             // Second Tab at same position — show list

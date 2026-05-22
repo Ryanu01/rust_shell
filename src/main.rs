@@ -2,8 +2,8 @@ mod helper;
 mod utils;
 use helper::ShellCompleter;
 
-use rustyline::{error::ReadlineError, history::DefaultHistory};
 use rustyline::{CompletionType, Config, EditMode, Editor};
+use rustyline::{error::ReadlineError, history::DefaultHistory};
 
 use pathsearch::find_executable_in_path;
 use std::cell::RefCell;
@@ -11,21 +11,34 @@ use std::collections::HashMap;
 #[allow(unused_imports)]
 use std::io::{self, Write};
 use std::sync::{LazyLock, Mutex};
-use std::{env, fs::{self, File, OpenOptions}, path::PathBuf, process::{self, Command, Stdio}};
+use std::{
+    env,
+    fs::{self, File, OpenOptions},
+    path::PathBuf,
+    process::{self, Command, Stdio},
+};
 
-const BUILTINS: [&str; 6] = ["echo", "exit", "type", "pwd", "cd", "complete"];
+#[derive(Clone)]
+struct Job {
+    id: usize,
+    pid: u32,
+    command: String,
+}
+
+const BUILTINS: [&str; 7] = ["echo", "exit", "type", "pwd", "cd", "complete", "jobs"];
 
 pub(crate) static COMPLETION_SPEC: LazyLock<Mutex<HashMap<String, String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-fn main() {
 
-     let config = Config::builder()
+pub(crate) static JOBS: LazyLock<Mutex<Vec<Job>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
+fn main() {
+    let config = Config::builder()
         .completion_type(CompletionType::List)
         .edit_mode(EditMode::Emacs)
         .build();
 
     let mut rl = Editor::<ShellCompleter, DefaultHistory>::with_config(config).unwrap();
-
 
     rl.set_helper(Some(ShellCompleter {
         last_completed: RefCell::new(String::new()),
@@ -47,11 +60,19 @@ fn main() {
 }
 
 fn read_input(cmd: &str) {
-    let parts= shell_words::split(cmd).unwrap();
+    let parts = shell_words::split(cmd).unwrap();
 
     let slices: Vec<&str> = parts.iter().map(|s| s.as_str()).collect();
     if slices.is_empty() {
         return;
+    }
+
+    let mut background = false;
+    let mut slices = slices;
+
+    if slices.last() == Some(&"&") {
+        background = true;
+        slices.pop();
     }
 
     let command = slices[0];
@@ -63,7 +84,8 @@ fn read_input(cmd: &str) {
         "pwd" => cmd_pwd(),
         "cd" => cmd_cd(slices[1..].to_vec()),
         "complete" => cmd_complete(slices[1..].to_vec()),
-        _ => run_external_cmd(slices),
+        "jobs" => cmd_jobs(slices[1..].to_vec()),
+        _ => run_external_cmd(slices, background),
     }
 }
 
@@ -71,8 +93,20 @@ fn cmd_exit() {
     process::exit(0);
 }
 
-fn cmd_complete (args: Vec<&str>) {
+#[allow(unused_variables)]
+fn cmd_jobs(args: Vec<&str>) {
+    let jobs = JOBS.lock().unwrap();
 
+    if jobs.len() > 0 {
+        let i = jobs.len() - 1;
+        println!(
+            "[{}]+  Running                 {} &",
+            jobs[i].id, jobs[i].command
+        );
+    }
+}
+
+fn cmd_complete(args: Vec<&str>) {
     let mut map = COMPLETION_SPEC.lock().unwrap();
     let mut i = 0;
     let mut cmd = None;
@@ -83,26 +117,26 @@ fn cmd_complete (args: Vec<&str>) {
                 if i + 1 < args.len() {
                     cmd = Some(args[i + 1])
                 }
-                i+=2;
+                i += 2;
                 continue;
-            },
-            
+            }
+
             "-C" => {
                 if i + 2 < args.len() {
-                    if let (Some(cmd_path), Some(cmd)) = (args.get(i+1), args.get(i+2)) {
+                    if let (Some(cmd_path), Some(cmd)) = (args.get(i + 1), args.get(i + 2)) {
                         map.insert(cmd.to_string(), cmd_path.to_string());
                     }
                 }
-                i+=3;
+                i += 3;
                 continue;
-            },
+            }
             "-r" => {
                 if i + 1 < args.len() {
                     delete_cmd = Some(args[i + 1]);
                 }
-                i+=2;
+                i += 2;
                 continue;
-            },
+            }
             _ => (),
         }
 
@@ -122,9 +156,7 @@ fn cmd_complete (args: Vec<&str>) {
         } else {
             println!("complete: {}: no completion specification", cmd_name);
         }
-
     }
- 
 }
 
 fn cmd_echo(args: Vec<&str>) {
@@ -149,14 +181,14 @@ fn cmd_echo(args: Vec<&str>) {
                     stderr_redirect = Some(args[i + 1]);
                 }
 
-                i +=2;
+                i += 2;
                 continue;
             }
 
             ">>" | "1>>" => {
                 if i + 1 < args.len() {
                     stdout_redirect = Some(args[i + 1]);
-                    append  = true;
+                    append = true;
                 }
                 break;
             }
@@ -173,27 +205,27 @@ fn cmd_echo(args: Vec<&str>) {
     }
 
     if append {
-
         match stdout_redirect {
-
             Some(file) => {
-                let mut file_append = OpenOptions::new().create(true).append(true).open(file).unwrap();
-                file_append.write_all(format!("{}\n", text).as_bytes()).unwrap();
+                let mut file_append = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(file)
+                    .unwrap();
+                file_append
+                    .write_all(format!("{}\n", text).as_bytes())
+                    .unwrap();
             }
-
 
             None => {
                 println!("{}", text);
             }
         }
-
     } else {
         match stdout_redirect {
-
             Some(file) => {
                 fs::write(file, format!("{}\n", text)).unwrap();
             }
-
 
             None => {
                 println!("{}", text);
@@ -225,7 +257,7 @@ fn cmd_pwd() {
     println!("{}", env::current_dir().unwrap().display());
 }
 
-fn run_external_cmd(parts: Vec<&str>) {
+fn run_external_cmd(parts: Vec<&str>, background: bool) {
     let command = parts[0];
     let mut append = false;
     if find_executable_in_path(command).is_none() {
@@ -239,7 +271,7 @@ fn run_external_cmd(parts: Vec<&str>) {
     let mut i = 1;
     while i < parts.len() {
         match parts[i] {
-            ">"| "1>" => {
+            ">" | "1>" => {
                 if i + 1 < parts.len() {
                     output_redirect = Some(parts[i + 1]);
                 }
@@ -248,7 +280,7 @@ fn run_external_cmd(parts: Vec<&str>) {
 
             "2>" => {
                 if i + 1 < parts.len() {
-                    err_redirect = Some(parts[i+1])
+                    err_redirect = Some(parts[i + 1])
                 }
 
                 i += 2;
@@ -265,7 +297,7 @@ fn run_external_cmd(parts: Vec<&str>) {
 
             "2>>" => {
                 if i + 1 < parts.len() {
-                    err_redirect = Some(parts[i+1])
+                    err_redirect = Some(parts[i + 1])
                 }
                 append = true;
                 i += 2;
@@ -279,17 +311,16 @@ fn run_external_cmd(parts: Vec<&str>) {
     let mut cmd = Command::new(command);
     cmd.args(&args);
 
-
     /*
-    * instead of printing output to terminal put it in some file
-    */
+     * instead of printing output to terminal put it in some file
+     */
     if let Some(file_name) = err_redirect {
         let file = if append {
             OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(file_name)
-            .unwrap()
+                .create(true)
+                .append(true)
+                .open(file_name)
+                .unwrap()
         } else {
             File::create(file_name).unwrap()
         };
@@ -299,30 +330,38 @@ fn run_external_cmd(parts: Vec<&str>) {
     if let Some(file_name) = output_redirect {
         let file = if append {
             OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(file_name)
-            .unwrap()
-        }else {
+                .create(true)
+                .append(true)
+                .open(file_name)
+                .unwrap()
+        } else {
             File::create(file_name).unwrap()
         };
 
-        cmd.stdout(Stdio::from(file));   
+        cmd.stdout(Stdio::from(file));
     }
 
-    cmd.status().unwrap();
-    
+    if background {
+        let child = cmd.spawn().unwrap();
+        let pid = child.id();
+        let mut jobs = JOBS.lock().unwrap();
+
+        let job_id = jobs.len() + 1;
+
+        jobs.push(Job {
+            id: job_id,
+            pid,
+            command: parts.join(" "),
+        });
+
+        println!("[{}] {}", job_id, pid);
+    } else {
+        cmd.status().unwrap();
+    }
 }
 
-
-
-
 fn cmd_cd(args: Vec<&str>) {
-    let target = if args.is_empty() {
-        "~"
-    } else {
-        args[0]
-    };
+    let target = if args.is_empty() { "~" } else { args[0] };
 
     let path: PathBuf = if target == "~" {
         PathBuf::from(env::var("HOME").unwrap())
