@@ -9,9 +9,10 @@ use pathsearch::find_executable_in_path;
 use std::cell::RefCell;
 use std::collections::HashMap;
 #[allow(unused_imports)]
-use std::io::{self, Write};
-use std::process::Child;
+use std::io::{self, Read, Write};
+use std::process::{Child, ChildStdin, ChildStdout};
 use std::sync::{LazyLock, Mutex};
+use std::thread;
 use std::{
     env,
     fs::{self, File, OpenOptions},
@@ -25,7 +26,7 @@ struct Job {
     command: String,
 }
 
-const BUILTINS: [&str; 7] = ["echo", "exit", "type", "pwd", "cd", "complete", "jobs"];
+const BUILTINS: [&str; 8] = ["echo", "exit", "type", "pwd", "cd", "complete", "jobs", "history"];
 
 pub(crate) static COMPLETION_SPEC: LazyLock<Mutex<HashMap<String, String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -44,7 +45,7 @@ fn main() {
     }));
 
     loop {
-        reap_jobs(false);
+        reap_jobs(false, &mut io::stdout().lock());
         match rl.readline("$ ") {
             Ok(line) => {
                 read_input(line.trim());
@@ -61,7 +62,6 @@ fn main() {
 
 fn read_input(cmd: &str) {
     let parts = shell_words::split(cmd).unwrap();
-    let pipe_line = cmd.contains("|");
     let slices: Vec<&str> = parts.iter().map(|s| s.as_str()).collect();
     if slices.is_empty() {
         return;
@@ -74,28 +74,43 @@ fn read_input(cmd: &str) {
         slices.pop();
     }
 
+    let mut pipe_positions = Vec::new();
+    for (i, &s) in slices.iter().enumerate() {
+        if s == "|" {
+            pipe_positions.push(i);
+        }
+    }
+
+    if !pipe_positions.is_empty() {
+        let mut segments: Vec<Vec<&str>> = Vec::new();
+        let mut start = 0;
+        for &pos in &pipe_positions {
+            segments.push(slices[start..pos].to_vec());
+            start = pos + 1;
+        }
+        segments.push(slices[start..].to_vec());
+        run_pipeline(segments);
+        return;
+    }
+
     let command = slices[0];
 
     match command {
         "exit" => cmd_exit(),
-        "echo" => cmd_echo(slices[1..].to_vec()),
-        "type" => cmd_type(slices[1..].to_vec()),
-        "pwd" => cmd_pwd(),
-        "cd" => cmd_cd(slices[1..].to_vec()),
-        "complete" => cmd_complete(slices[1..].to_vec()),
-        "jobs" => cmd_jobs(slices[1..].to_vec()),
-        _ => run_external_cmd(slices, background, pipe_line),
+        "echo" => cmd_echo(slices[1..].to_vec(), &mut io::stdout().lock()),
+        "type" => cmd_type(slices[1..].to_vec(), &mut io::stdout().lock()),
+        "pwd" => cmd_pwd(&mut io::stdout().lock()),
+        "cd" => cmd_cd(slices[1..].to_vec(), &mut io::stdout().lock()),
+        "complete" => cmd_complete(slices[1..].to_vec(), &mut io::stdout().lock()),
+        "jobs" => cmd_jobs(slices[1..].to_vec(), &mut io::stdout().lock()),
+        _ => run_external_cmd(slices, background),
     }
 }
 
 fn cmd_exit() {
     process::exit(0);
 }
-#[allow(unused_variables)]
-fn cmd_jobs(_args: Vec<&str>) {
-    reap_jobs(true);
-}
-fn reap_jobs(print_running: bool) {
+fn reap_jobs(print_running: bool, writer: &mut dyn Write) {
     let mut jobs = JOBS.lock().unwrap();
 
     let mut it = 0;
@@ -118,10 +133,12 @@ fn reap_jobs(print_running: bool) {
         // automatic reaping only prints Done jobs
         // jobs builtin prints everything
         if status == "Done" || print_running {
-            println!(
+            writeln!(
+                writer,
                 "[{}]{}  {:<24}{}",
                 jobs[it].id, symbol, status, jobs[it].command
-            );
+            )
+            .unwrap();
         }
 
         if status == "Done" {
@@ -131,7 +148,11 @@ fn reap_jobs(print_running: bool) {
         }
     }
 }
-fn cmd_complete(args: Vec<&str>) {
+#[allow(unused_variables)]
+fn cmd_jobs(_args: Vec<&str>, writer: &mut dyn Write) {
+    reap_jobs(true, writer);
+}
+fn cmd_complete(args: Vec<&str>, writer: &mut dyn Write) {
     let mut map = COMPLETION_SPEC.lock().unwrap();
     let mut i = 0;
     let mut cmd = None;
@@ -177,14 +198,19 @@ fn cmd_complete(args: Vec<&str>) {
     if let Some(cmd_name) = cmd {
         if let Some(cmd_path) = map.get(cmd_name) {
             let stdout = format!("complete -C '{cmd_path}' {}", cmd_name);
-            println!("{}", stdout);
+            writeln!(writer, "{}", stdout).unwrap();
         } else {
-            println!("complete: {}: no completion specification", cmd_name);
+            writeln!(
+                writer,
+                "complete: {}: no completion specification",
+                cmd_name
+            )
+            .unwrap();
         }
     }
 }
 
-fn cmd_echo(args: Vec<&str>) {
+fn cmd_echo(args: Vec<&str>, writer: &mut dyn Write) {
     let mut output = Vec::new();
     let mut stdout_redirect = None;
     let mut stderr_redirect = None;
@@ -243,7 +269,7 @@ fn cmd_echo(args: Vec<&str>) {
             }
 
             None => {
-                println!("{}", text);
+                writeln!(writer, "{}", text).unwrap();
             }
         }
     } else {
@@ -253,24 +279,24 @@ fn cmd_echo(args: Vec<&str>) {
             }
 
             None => {
-                println!("{}", text);
+                writeln!(writer, "{}", text).unwrap();
             }
         }
     }
 }
 
-fn cmd_type(args: Vec<&str>) {
+fn cmd_type(args: Vec<&str>, writer: &mut dyn Write) {
     if args.is_empty() {
         return;
     }
 
     let command = args[0];
     if is_builtin(command) {
-        println!("{} is a shell builtin", command);
+        writeln!(writer, "{} is a shell builtin", command).unwrap();
     } else if let Some(path) = find_executable_in_path(command) {
-        println!("{} is {}", command, path.display());
+        writeln!(writer, "{} is {}", command, path.display()).unwrap();
     } else {
-        println!("{}: not found", command);
+        writeln!(writer, "{}: not found", command).unwrap();
     }
 }
 
@@ -278,141 +304,232 @@ fn is_builtin(cmd: &str) -> bool {
     BUILTINS.contains(&cmd)
 }
 
-fn cmd_pwd() {
-    println!("{}", env::current_dir().unwrap().display());
+fn execute_builtin(cmd: &str, args: Vec<&str>, writer: &mut dyn Write) {
+    match cmd {
+        "echo" => cmd_echo(args, writer),
+        "type" => cmd_type(args, writer),
+        "pwd" => cmd_pwd(writer),
+        "cd" => cmd_cd(args, writer),
+        "complete" => cmd_complete(args, writer),
+        "jobs" => cmd_jobs(args, writer),
+        _ => (),
+    }
 }
 
-fn run_external_cmd(parts: Vec<&str>, background: bool, pipe_line: bool) {
-    if pipe_line {
-        run_dual_cmd(&parts);
-    } else {
-        let command = parts[0];
-        let mut append = false;
-        if find_executable_in_path(command).is_none() {
-            println!("{}: command not found", command);
+fn run_pipeline(segments: Vec<Vec<&str>>) {
+    for segment in &segments {
+        if !is_builtin(segment[0]) && find_executable_in_path(segment[0]).is_none() {
+            writeln!(&mut io::stdout().lock(), "{}: command not found", segment[0]).unwrap();
             return;
         }
+    }
 
-        let mut args = Vec::new();
-        let mut output_redirect: Option<&str> = None;
-        let mut err_redirect: Option<&str> = None;
-        let mut i = 1;
-        while i < parts.len() {
-            match parts[i] {
-                ">" | "1>" => {
-                    if i + 1 < parts.len() {
-                        output_redirect = Some(parts[i + 1]);
-                    }
-                    break;
-                }
+    let has_builtins = segments.iter().any(|s| is_builtin(s[0]));
+    if has_builtins {
+        run_sequential_pipeline(segments);
+    } else {
+        run_concurrent_external_pipeline(segments);
+    }
+}
 
-                "2>" => {
-                    if i + 1 < parts.len() {
-                        err_redirect = Some(parts[i + 1])
-                    }
+fn run_concurrent_external_pipeline(segments: Vec<Vec<&str>>) {
+    let n = segments.len();
+    let mut child_stdins: Vec<Option<ChildStdin>> = Vec::new();
+    let mut child_stdouts: Vec<Option<ChildStdout>> = Vec::new();
+    let mut children: Vec<Child> = Vec::new();
 
-                    i += 2;
-                    continue;
-                }
+    for (i, seg) in segments.iter().enumerate() {
+        let mut cmd = Command::new(seg[0]);
+        cmd.args(&seg[1..]);
 
-                ">>" | "1>>" => {
-                    if i + 1 < parts.len() {
-                        output_redirect = Some(parts[i + 1]);
-                        append = true;
-                    }
-                    break;
-                }
+        if i > 0 {
+            cmd.stdin(Stdio::piped());
+        }
+        if i < n - 1 {
+            cmd.stdout(Stdio::piped());
+        }
 
-                "2>>" => {
-                    if i + 1 < parts.len() {
-                        err_redirect = Some(parts[i + 1])
-                    }
-                    append = true;
-                    i += 2;
-                    continue;
-                }
-                arg => args.push(arg),
+        let mut child = cmd.spawn().unwrap();
+        child_stdins.push(if i > 0 { child.stdin.take() } else { None });
+        child_stdouts.push(if i < n - 1 { child.stdout.take() } else { None });
+        children.push(child);
+    }
+
+    let mut threads = Vec::new();
+    for i in 0..n - 1 {
+        let mut prev_stdout = child_stdouts[i].take().unwrap();
+        let mut this_stdin = child_stdins[i + 1].take().unwrap();
+        threads.push(thread::spawn(move || {
+            let _ = io::copy(&mut prev_stdout, &mut this_stdin);
+        }));
+    }
+
+    if let Some(last) = children.last_mut() {
+        last.wait().unwrap();
+    }
+
+    for t in threads {
+        let _ = t.join();
+    }
+
+    for child in &mut children {
+        let _ = child.wait();
+    }
+}
+
+fn run_sequential_pipeline(segments: Vec<Vec<&str>>) {
+    let n = segments.len();
+    let mut prev_output: Option<Vec<u8>> = None;
+
+    for (i, segment) in segments.iter().enumerate() {
+        let is_last = i == n - 1;
+        let cmd = segment[0];
+        let args = segment[1..].to_vec();
+
+        if is_builtin(cmd) {
+            if is_last {
+                execute_builtin(cmd, args, &mut io::stdout().lock());
+            } else {
+                let mut buf: Vec<u8> = Vec::new();
+                execute_builtin(cmd, args, &mut buf);
+                prev_output = Some(buf);
             }
-            i += 1;
-        }
+        } else {
+            let mut command = Command::new(cmd);
+            command.args(&args);
 
-        let mut cmd = Command::new(command);
-        cmd.args(&args);
+            if prev_output.is_some() {
+                command.stdin(Stdio::piped());
+            }
+            if !is_last {
+                command.stdout(Stdio::piped());
+            }
 
-        /*
-         * instead of printing output to terminal put it in some file
-         */
-        if let Some(file_name) = err_redirect {
-            let file = if append {
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(file_name)
-                    .unwrap()
-            } else {
-                File::create(file_name).unwrap()
-            };
-            cmd.stderr(Stdio::from(file));
-        }
-
-        if let Some(file_name) = output_redirect {
-            let file = if append {
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(file_name)
-                    .unwrap()
-            } else {
-                File::create(file_name).unwrap()
-            };
-
-            cmd.stdout(Stdio::from(file));
-        }
-
-        if background {
-            let mut child = cmd.spawn().unwrap();
-            let pid = child.id();
-            let mut jobs = JOBS.lock().unwrap();
-
-            let job_id = jobs.len() + 1;
-
-            jobs.push(Job {
-                id: job_id,
-                child,
-                command: parts.join(" "),
+            let mut child = command.spawn().unwrap_or_else(|_| {
+                panic!("{}: command not found", cmd);
             });
 
-            println!("[{}] {}", job_id, pid);
-        } else {
-            cmd.status().unwrap();
+            if let Some(input) = prev_output.take() {
+                if let Some(mut stdin) = child.stdin.take() {
+                    stdin.write_all(&input).unwrap();
+                }
+            }
+
+            if is_last {
+                child.wait().unwrap();
+            } else {
+                let output = child.wait_with_output().unwrap();
+                prev_output = Some(output.stdout);
+            }
         }
     }
 }
 
-fn run_dual_cmd(args: &Vec<&str>) {
-    let pipe_pos = args.iter().position(|&x| x == "|").unwrap();
-    let left = &args[..pipe_pos];
-    let right = &args[pipe_pos + 1..];
-
-    let mut first = Command::new(left[0])
-        .args(&left[1..])
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    let first_stdout = first.stdout.take().unwrap();
-
-    let mut second = Command::new(right[0])
-        .args(&right[1..])
-        .stdin(Stdio::from(first_stdout))
-        .spawn()
-        .unwrap();
-
-    second.wait().unwrap();
-    first.wait().unwrap();
+fn cmd_pwd(writer: &mut dyn Write) {
+    writeln!(writer, "{}", env::current_dir().unwrap().display()).unwrap();
 }
 
-fn cmd_cd(args: Vec<&str>) {
+fn run_external_cmd(parts: Vec<&str>, background: bool) {
+    let command = parts[0];
+    let mut append = false;
+    if find_executable_in_path(command).is_none() {
+        println!("{}: command not found", command);
+        return;
+    }
+
+    let mut args = Vec::new();
+    let mut output_redirect: Option<&str> = None;
+    let mut err_redirect: Option<&str> = None;
+    let mut i = 1;
+    while i < parts.len() {
+        match parts[i] {
+            ">" | "1>" => {
+                if i + 1 < parts.len() {
+                    output_redirect = Some(parts[i + 1]);
+                }
+                break;
+            }
+
+            "2>" => {
+                if i + 1 < parts.len() {
+                    err_redirect = Some(parts[i + 1])
+                }
+
+                i += 2;
+                continue;
+            }
+
+            ">>" | "1>>" => {
+                if i + 1 < parts.len() {
+                    output_redirect = Some(parts[i + 1]);
+                    append = true;
+                }
+                break;
+            }
+
+            "2>>" => {
+                if i + 1 < parts.len() {
+                    err_redirect = Some(parts[i + 1])
+                }
+                append = true;
+                i += 2;
+                continue;
+            }
+            arg => args.push(arg),
+        }
+        i += 1;
+    }
+
+    let mut cmd = Command::new(command);
+    cmd.args(&args);
+
+    if let Some(file_name) = err_redirect {
+        let file = if append {
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(file_name)
+                .unwrap()
+        } else {
+            File::create(file_name).unwrap()
+        };
+        cmd.stderr(Stdio::from(file));
+    }
+
+    if let Some(file_name) = output_redirect {
+        let file = if append {
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(file_name)
+                .unwrap()
+        } else {
+            File::create(file_name).unwrap()
+        };
+
+        cmd.stdout(Stdio::from(file));
+    }
+
+    if background {
+        let child = cmd.spawn().unwrap();
+        let pid = child.id();
+        let mut jobs = JOBS.lock().unwrap();
+
+        let job_id = jobs.len() + 1;
+
+        jobs.push(Job {
+            id: job_id,
+            child,
+            command: parts.join(" "),
+        });
+
+        println!("[{}] {}", job_id, pid);
+    } else {
+        cmd.status().unwrap();
+    }
+}
+
+fn cmd_cd(args: Vec<&str>, writer: &mut dyn Write) {
     let target = if args.is_empty() { "~" } else { args[0] };
 
     let path: PathBuf = if target == "~" {
@@ -424,6 +541,6 @@ fn cmd_cd(args: Vec<&str>) {
     if path.is_dir() {
         env::set_current_dir(&path).unwrap();
     } else {
-        println!("cd: {}: No such file or directory", target);
+        writeln!(writer, "cd: {}: No such file or directory", target).unwrap();
     }
 }
