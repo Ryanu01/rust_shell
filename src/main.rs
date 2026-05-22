@@ -10,6 +10,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 #[allow(unused_imports)]
 use std::io::{self, Write};
+use std::process::Child;
 use std::sync::{LazyLock, Mutex};
 use std::{
     env,
@@ -18,10 +19,9 @@ use std::{
     process::{self, Command, Stdio},
 };
 
-#[derive(Clone)]
 struct Job {
     id: usize,
-    pid: u32,
+    child: Child,
     command: String,
 }
 
@@ -31,7 +31,6 @@ pub(crate) static COMPLETION_SPEC: LazyLock<Mutex<HashMap<String, String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub(crate) static JOBS: LazyLock<Mutex<Vec<Job>>> = LazyLock::new(|| Mutex::new(Vec::new()));
-
 fn main() {
     let config = Config::builder()
         .completion_type(CompletionType::List)
@@ -45,6 +44,7 @@ fn main() {
     }));
 
     loop {
+        reap_jobs(false);
         match rl.readline("$ ") {
             Ok(line) => {
                 read_input(line.trim());
@@ -92,44 +92,46 @@ fn read_input(cmd: &str) {
 fn cmd_exit() {
     process::exit(0);
 }
-
 #[allow(unused_variables)]
-fn cmd_jobs(args: Vec<&str>) {
-    let jobs = JOBS.lock().unwrap();
-    let spaces = 17;
+fn cmd_jobs(_args: Vec<&str>) {
+    reap_jobs(true);
+}
+fn reap_jobs(print_running: bool) {
+    let mut jobs = JOBS.lock().unwrap();
 
     let mut it = 0;
 
     while it < jobs.len() {
-        if it == jobs.len() - 1 {
-            println!(
-                "[{}]+  Running{:<width$}{}",
-                jobs[it].id,
-                "",
-                jobs[it].command,
-                width = spaces
-            );
+        let status = match jobs[it].child.try_wait() {
+            Ok(Some(_)) => "Done",
+            Ok(None) => "Running",
+            Err(_) => "Error",
+        };
+
+        let symbol = if it == jobs.len() - 1 {
+            "+"
         } else if it == jobs.len() - 2 {
-            println!(
-                "[{}]-  Running{:<width$}{}",
-                jobs[it].id,
-                "",
-                jobs[it].command,
-                width = spaces
-            );
+            "-"
         } else {
+            " "
+        };
+
+        // automatic reaping only prints Done jobs
+        // jobs builtin prints everything
+        if status == "Done" || print_running {
             println!(
-                "[{}]   Running{:<width$}{}",
-                jobs[it].id,
-                "",
-                jobs[it].command,
-                width = spaces
+                "[{}]{}  {:<24}{}",
+                jobs[it].id, symbol, status, jobs[it].command
             );
         }
-        it += 1;
+
+        if status == "Done" {
+            jobs.remove(it);
+        } else {
+            it += 1;
+        }
     }
 }
-
 fn cmd_complete(args: Vec<&str>) {
     let mut map = COMPLETION_SPEC.lock().unwrap();
     let mut i = 0;
@@ -366,7 +368,7 @@ fn run_external_cmd(parts: Vec<&str>, background: bool) {
     }
 
     if background {
-        let child = cmd.spawn().unwrap();
+        let mut child = cmd.spawn().unwrap();
         let pid = child.id();
         let mut jobs = JOBS.lock().unwrap();
 
@@ -374,7 +376,7 @@ fn run_external_cmd(parts: Vec<&str>, background: bool) {
 
         jobs.push(Job {
             id: job_id,
-            pid,
+            child,
             command: parts.join(" "),
         });
 
