@@ -61,7 +61,7 @@ fn main() {
 
 fn read_input(cmd: &str) {
     let parts = shell_words::split(cmd).unwrap();
-
+    let pipe_line = cmd.contains("|");
     let slices: Vec<&str> = parts.iter().map(|s| s.as_str()).collect();
     if slices.is_empty() {
         return;
@@ -69,7 +69,6 @@ fn read_input(cmd: &str) {
 
     let mut background = false;
     let mut slices = slices;
-
     if slices.last() == Some(&"&") {
         background = true;
         slices.pop();
@@ -85,7 +84,7 @@ fn read_input(cmd: &str) {
         "cd" => cmd_cd(slices[1..].to_vec()),
         "complete" => cmd_complete(slices[1..].to_vec()),
         "jobs" => cmd_jobs(slices[1..].to_vec()),
-        _ => run_external_cmd(slices, background),
+        _ => run_external_cmd(slices, background, pipe_line),
     }
 }
 
@@ -283,107 +282,134 @@ fn cmd_pwd() {
     println!("{}", env::current_dir().unwrap().display());
 }
 
-fn run_external_cmd(parts: Vec<&str>, background: bool) {
-    let command = parts[0];
-    let mut append = false;
-    if find_executable_in_path(command).is_none() {
-        println!("{}: command not found", command);
-        return;
-    }
-
-    let mut args = Vec::new();
-    let mut output_redirect: Option<&str> = None;
-    let mut err_redirect: Option<&str> = None;
-    let mut i = 1;
-    while i < parts.len() {
-        match parts[i] {
-            ">" | "1>" => {
-                if i + 1 < parts.len() {
-                    output_redirect = Some(parts[i + 1]);
-                }
-                break;
-            }
-
-            "2>" => {
-                if i + 1 < parts.len() {
-                    err_redirect = Some(parts[i + 1])
-                }
-
-                i += 2;
-                continue;
-            }
-
-            ">>" | "1>>" => {
-                if i + 1 < parts.len() {
-                    output_redirect = Some(parts[i + 1]);
-                    append = true;
-                }
-                break;
-            }
-
-            "2>>" => {
-                if i + 1 < parts.len() {
-                    err_redirect = Some(parts[i + 1])
-                }
-                append = true;
-                i += 2;
-                continue;
-            }
-            arg => args.push(arg),
-        }
-        i += 1;
-    }
-
-    let mut cmd = Command::new(command);
-    cmd.args(&args);
-
-    /*
-     * instead of printing output to terminal put it in some file
-     */
-    if let Some(file_name) = err_redirect {
-        let file = if append {
-            OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(file_name)
-                .unwrap()
-        } else {
-            File::create(file_name).unwrap()
-        };
-        cmd.stderr(Stdio::from(file));
-    }
-
-    if let Some(file_name) = output_redirect {
-        let file = if append {
-            OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(file_name)
-                .unwrap()
-        } else {
-            File::create(file_name).unwrap()
-        };
-
-        cmd.stdout(Stdio::from(file));
-    }
-
-    if background {
-        let mut child = cmd.spawn().unwrap();
-        let pid = child.id();
-        let mut jobs = JOBS.lock().unwrap();
-
-        let job_id = jobs.len() + 1;
-
-        jobs.push(Job {
-            id: job_id,
-            child,
-            command: parts.join(" "),
-        });
-
-        println!("[{}] {}", job_id, pid);
+fn run_external_cmd(parts: Vec<&str>, background: bool, pipe_line: bool) {
+    if pipe_line {
+        run_dual_cmd(&parts);
     } else {
-        cmd.status().unwrap();
+        let command = parts[0];
+        let mut append = false;
+        if find_executable_in_path(command).is_none() {
+            println!("{}: command not found", command);
+            return;
+        }
+
+        let mut args = Vec::new();
+        let mut output_redirect: Option<&str> = None;
+        let mut err_redirect: Option<&str> = None;
+        let mut i = 1;
+        while i < parts.len() {
+            match parts[i] {
+                ">" | "1>" => {
+                    if i + 1 < parts.len() {
+                        output_redirect = Some(parts[i + 1]);
+                    }
+                    break;
+                }
+
+                "2>" => {
+                    if i + 1 < parts.len() {
+                        err_redirect = Some(parts[i + 1])
+                    }
+
+                    i += 2;
+                    continue;
+                }
+
+                ">>" | "1>>" => {
+                    if i + 1 < parts.len() {
+                        output_redirect = Some(parts[i + 1]);
+                        append = true;
+                    }
+                    break;
+                }
+
+                "2>>" => {
+                    if i + 1 < parts.len() {
+                        err_redirect = Some(parts[i + 1])
+                    }
+                    append = true;
+                    i += 2;
+                    continue;
+                }
+                arg => args.push(arg),
+            }
+            i += 1;
+        }
+
+        let mut cmd = Command::new(command);
+        cmd.args(&args);
+
+        /*
+         * instead of printing output to terminal put it in some file
+         */
+        if let Some(file_name) = err_redirect {
+            let file = if append {
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(file_name)
+                    .unwrap()
+            } else {
+                File::create(file_name).unwrap()
+            };
+            cmd.stderr(Stdio::from(file));
+        }
+
+        if let Some(file_name) = output_redirect {
+            let file = if append {
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(file_name)
+                    .unwrap()
+            } else {
+                File::create(file_name).unwrap()
+            };
+
+            cmd.stdout(Stdio::from(file));
+        }
+
+        if background {
+            let mut child = cmd.spawn().unwrap();
+            let pid = child.id();
+            let mut jobs = JOBS.lock().unwrap();
+
+            let job_id = jobs.len() + 1;
+
+            jobs.push(Job {
+                id: job_id,
+                child,
+                command: parts.join(" "),
+            });
+
+            println!("[{}] {}", job_id, pid);
+        } else {
+            cmd.status().unwrap();
+        }
     }
+}
+
+fn run_dual_cmd(args: &Vec<&str>) {
+    let pipe_pos = args.iter().position(|&x| x == "|").unwrap();
+    let left = &args[..pipe_pos];
+    let right = &args[pipe_pos + 1..];
+
+    let mut first = Command::new(left[0])
+        .args(&left[1..])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let first_stdout = first.stdout.take().unwrap();
+
+    let mut second = Command::new(right[0])
+        .args(&right[1..])
+        .stdin(Stdio::from(first_stdout))
+        .spawn()
+        .unwrap();
+
+    second.wait().unwrap();
+    first.wait().unwrap();
 }
 
 fn cmd_cd(args: Vec<&str>) {
