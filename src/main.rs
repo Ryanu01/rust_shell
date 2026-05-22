@@ -96,13 +96,37 @@ fn cmd_exit() {
 #[allow(unused_variables)]
 fn cmd_jobs(args: Vec<&str>) {
     let jobs = JOBS.lock().unwrap();
+    let spaces = 17;
 
-    if jobs.len() > 0 {
-        let i = jobs.len() - 1;
-        println!(
-            "[{}]+  Running                 {} &",
-            jobs[i].id, jobs[i].command
-        );
+    let mut it = 0;
+
+    while it < jobs.len() {
+        if it == jobs.len() - 1 {
+            println!(
+                "[{}]+  Running{:<width$}{}",
+                jobs[it].id,
+                "",
+                jobs[it].command,
+                width = spaces
+            );
+        } else if it == jobs.len() - 2 {
+            println!(
+                "[{}]-  Running{:<width$}{}",
+                jobs[it].id,
+                "",
+                jobs[it].command,
+                width = spaces
+            );
+        } else {
+            println!(
+                "[{}]   Running{:<width$}{}",
+                jobs[it].id,
+                "",
+                jobs[it].command,
+                width = spaces
+            );
+        }
+        it += 1;
     }
 }
 
