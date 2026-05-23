@@ -93,6 +93,7 @@ fn read_input(
 ) {
     let parts = shell_words::split(cmd).unwrap();
     let parts = expand_vars(parts);
+    let parts: Vec<String> = parts.into_iter().filter(|s| !s.is_empty()).collect();
     let slices: Vec<&str> = parts.iter().map(|s| s.as_str()).collect();
     if slices.is_empty() {
         return;
