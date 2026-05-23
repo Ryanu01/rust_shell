@@ -47,17 +47,37 @@ fn main() {
         last_completed: RefCell::new(String::new()),
     }));
 
+    let hist_file = env::var("HISTFILE").ok();
+
+    if let Some(ref path) = hist_file {
+        let _ = rl.load_history(path);
+    }
+
     loop {
         reap_jobs(false, &mut io::stdout().lock());
         match rl.readline("$ ") {
             Ok(line) => {
                 rl.add_history_entry(line.as_str()).unwrap();
-                read_input(line.trim(), &mut rl, &mut last_appended);
+                read_input(line.trim(), &mut rl, &mut last_appended, &hist_file);
             }
-            Err(ReadlineError::Interrupted) => break,
-            Err(ReadlineError::Eof) => break,
+            Err(ReadlineError::Interrupted) => {
+                if let Some(ref path) = hist_file {
+                    let _ = rl.save_history(path);
+                }
+                break;
+            }
+            Err(ReadlineError::Eof) => {
+                if let Some(ref path) = hist_file {
+                    let _ = rl.save_history(path);
+                }
+                break;
+            }
             Err(err) => {
                 println!("Error: {:?}", err);
+
+                if let Some(ref path) = hist_file {
+                    let _ = rl.save_history(path);
+                }
                 break;
             }
         }
@@ -68,6 +88,7 @@ fn read_input(
     cmd: &str,
     rl: &mut Editor<ShellCompleter, DefaultHistory>,
     last_appended: &mut usize,
+    hist_file: &Option<String>,
 ) {
     let parts = shell_words::split(cmd).unwrap();
     let slices: Vec<&str> = parts.iter().map(|s| s.as_str()).collect();
@@ -104,7 +125,7 @@ fn read_input(
     let command = slices[0];
 
     match command {
-        "exit" => cmd_exit(),
+        "exit" => cmd_exit(rl, hist_file),
         "echo" => cmd_echo(slices[1..].to_vec(), &mut io::stdout().lock()),
         "type" => cmd_type(slices[1..].to_vec(), &mut io::stdout().lock()),
         "pwd" => cmd_pwd(&mut io::stdout().lock()),
@@ -171,7 +192,14 @@ fn cmd_history(
     }
 }
 
-fn cmd_exit() {
+fn cmd_exit(rl: &mut Editor<ShellCompleter, DefaultHistory>, hist_file: &Option<String>) {
+    if let Some(path) = hist_file {
+        if let Ok(mut file) = fs::File::create(path) {
+            for entry in rl.history().iter() {
+                writeln!(file, "{}", entry).unwrap();
+            }
+        }
+    }
     process::exit(0);
 }
 fn reap_jobs(print_running: bool, writer: &mut dyn Write) {
