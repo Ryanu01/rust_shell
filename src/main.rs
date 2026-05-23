@@ -122,6 +122,15 @@ fn cmd_history(
         let path = args[1];
 
         rl.load_history(path).unwrap();
+    } else if !args.is_empty() && args[0] == "-w" {
+        let path = args[1];
+        let mut contents = String::new();
+        for records in rl.history().iter() {
+            contents.push_str(records);
+            contents.push('\n');
+        }
+
+        fs::write(path, contents).unwrap();
     } else if !args.is_empty() {
         let history_limit: usize = args[0].parse().unwrap();
 
