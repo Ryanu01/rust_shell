@@ -118,19 +118,19 @@ All shell state is stored in `LazyLock<Mutex<...>>` statics:
 
 **Linux (x86_64 / ARM64)**
 ```sh
-curl -LO https://github.com/<user>/rush/releases/latest/download/rush.gz
+curl -LO https://github.com/Ryanu01/rush/releases/latest/download/rush.gz
 gunzip rush.gz && chmod +x rush && sudo mv rush /usr/local/bin/
 ```
 
 **macOS (Intel / Apple Silicon)**
 ```sh
-curl -LO https://github.com/<user>/rush/releases/latest/download/rush.gz
+curl -LO https://github.com/Ryanu01/rush/releases/latest/download/rush.gz
 gunzip rush.gz && chmod +x rush && sudo mv rush /usr/local/bin/
 ```
 
 **Windows (x86_64)**
 ```powershell
-curl -LO https://github.com/<user>/rush/releases/latest/download/rush.exe.gz
+curl -LO https://github.com/Ryanu01/rush/releases/latest/download/rush.exe.gz
 gunzip rush.exe.gz
 .\rush.exe
 ```
@@ -140,7 +140,7 @@ gunzip rush.exe.gz
 Requires Rust 1.75+.
 
 ```sh
-cargo install --git https://github.com/<user>/rush
+cargo install --git https://github.com/Ryanu01/rush
 ```
 
 ### Build locally
