@@ -26,7 +26,9 @@ struct Job {
     command: String,
 }
 
-const BUILTINS: [&str; 8] = ["echo", "exit", "type", "pwd", "cd", "complete", "jobs", "history"];
+const BUILTINS: [&str; 8] = [
+    "echo", "exit", "type", "pwd", "cd", "complete", "jobs", "history",
+];
 
 pub(crate) static COMPLETION_SPEC: LazyLock<Mutex<HashMap<String, String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -39,7 +41,6 @@ fn main() {
         .build();
 
     let mut rl = Editor::<ShellCompleter, DefaultHistory>::with_config(config).unwrap();
-
     rl.set_helper(Some(ShellCompleter {
         last_completed: RefCell::new(String::new()),
     }));
@@ -48,7 +49,8 @@ fn main() {
         reap_jobs(false, &mut io::stdout().lock());
         match rl.readline("$ ") {
             Ok(line) => {
-                read_input(line.trim());
+                rl.add_history_entry(line.as_str()).unwrap();
+                read_input(line.trim(), &rl);
             }
             Err(ReadlineError::Interrupted) => break,
             Err(ReadlineError::Eof) => break,
@@ -60,7 +62,7 @@ fn main() {
     }
 }
 
-fn read_input(cmd: &str) {
+fn read_input(cmd: &str, rl: &Editor<ShellCompleter, DefaultHistory>) {
     let parts = shell_words::split(cmd).unwrap();
     let slices: Vec<&str> = parts.iter().map(|s| s.as_str()).collect();
     if slices.is_empty() {
@@ -103,7 +105,14 @@ fn read_input(cmd: &str) {
         "cd" => cmd_cd(slices[1..].to_vec(), &mut io::stdout().lock()),
         "complete" => cmd_complete(slices[1..].to_vec(), &mut io::stdout().lock()),
         "jobs" => cmd_jobs(slices[1..].to_vec(), &mut io::stdout().lock()),
+        "history" => cmd_history(rl),
         _ => run_external_cmd(slices, background),
+    }
+}
+
+fn cmd_history(rl: &Editor<ShellCompleter, DefaultHistory>) {
+    for (i, record) in rl.history().iter().enumerate() {
+        println!(" {} {}", i + 1, record);
     }
 }
 
@@ -319,7 +328,12 @@ fn execute_builtin(cmd: &str, args: Vec<&str>, writer: &mut dyn Write) {
 fn run_pipeline(segments: Vec<Vec<&str>>) {
     for segment in &segments {
         if !is_builtin(segment[0]) && find_executable_in_path(segment[0]).is_none() {
-            writeln!(&mut io::stdout().lock(), "{}: command not found", segment[0]).unwrap();
+            writeln!(
+                &mut io::stdout().lock(),
+                "{}: command not found",
+                segment[0]
+            )
+            .unwrap();
             return;
         }
     }
