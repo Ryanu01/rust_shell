@@ -41,6 +41,7 @@ fn main() {
         .edit_mode(EditMode::Emacs)
         .build();
 
+    let mut last_appended: usize = 0;
     let mut rl = Editor::<ShellCompleter, DefaultHistory>::with_config(config).unwrap();
     rl.set_helper(Some(ShellCompleter {
         last_completed: RefCell::new(String::new()),
@@ -51,7 +52,7 @@ fn main() {
         match rl.readline("$ ") {
             Ok(line) => {
                 rl.add_history_entry(line.as_str()).unwrap();
-                read_input(line.trim(), &mut rl);
+                read_input(line.trim(), &mut rl, &mut last_appended);
             }
             Err(ReadlineError::Interrupted) => break,
             Err(ReadlineError::Eof) => break,
@@ -63,7 +64,11 @@ fn main() {
     }
 }
 
-fn read_input(cmd: &str, rl: &mut Editor<ShellCompleter, DefaultHistory>) {
+fn read_input(
+    cmd: &str,
+    rl: &mut Editor<ShellCompleter, DefaultHistory>,
+    last_appended: &mut usize,
+) {
     let parts = shell_words::split(cmd).unwrap();
     let slices: Vec<&str> = parts.iter().map(|s| s.as_str()).collect();
     if slices.is_empty() {
@@ -106,7 +111,12 @@ fn read_input(cmd: &str, rl: &mut Editor<ShellCompleter, DefaultHistory>) {
         "cd" => cmd_cd(slices[1..].to_vec(), &mut io::stdout().lock()),
         "complete" => cmd_complete(slices[1..].to_vec(), &mut io::stdout().lock()),
         "jobs" => cmd_jobs(slices[1..].to_vec(), &mut io::stdout().lock()),
-        "history" => cmd_history(slices[1..].to_vec(), rl, &mut io::stdout().lock()),
+        "history" => cmd_history(
+            slices[1..].to_vec(),
+            rl,
+            &mut io::stdout().lock(),
+            last_appended,
+        ),
         _ => run_external_cmd(slices, background),
     }
 }
@@ -115,6 +125,7 @@ fn cmd_history(
     args: Vec<&str>,
     rl: &mut Editor<ShellCompleter, DefaultHistory>,
     writer: &mut dyn Write,
+    last_appended: &mut usize,
 ) {
     let history = rl.history();
     let total = history.len();
@@ -122,6 +133,20 @@ fn cmd_history(
         let path = args[1];
 
         rl.load_history(path).unwrap();
+    } else if !args.is_empty() && args[0] == "-a" {
+        let path = args[1];
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .unwrap();
+
+        for entry in rl.history().iter().skip(*last_appended) {
+            writeln!(file, "{}", entry).unwrap();
+        }
+
+        *last_appended = rl.history().len();
     } else if !args.is_empty() && args[0] == "-w" {
         let path = args[1];
         let mut contents = String::new();
