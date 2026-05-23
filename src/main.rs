@@ -2,6 +2,7 @@ mod helper;
 mod utils;
 use helper::ShellCompleter;
 
+use rustyline::history::History;
 use rustyline::{CompletionType, Config, EditMode, Editor};
 use rustyline::{error::ReadlineError, history::DefaultHistory};
 
@@ -105,14 +106,30 @@ fn read_input(cmd: &str, rl: &Editor<ShellCompleter, DefaultHistory>) {
         "cd" => cmd_cd(slices[1..].to_vec(), &mut io::stdout().lock()),
         "complete" => cmd_complete(slices[1..].to_vec(), &mut io::stdout().lock()),
         "jobs" => cmd_jobs(slices[1..].to_vec(), &mut io::stdout().lock()),
-        "history" => cmd_history(rl),
+        "history" => cmd_history(slices[1..].to_vec(), rl, &mut io::stdout().lock()),
         _ => run_external_cmd(slices, background),
     }
 }
 
-fn cmd_history(rl: &Editor<ShellCompleter, DefaultHistory>) {
-    for (i, record) in rl.history().iter().enumerate() {
-        println!(" {} {}", i + 1, record);
+fn cmd_history(
+    args: Vec<&str>,
+    rl: &Editor<ShellCompleter, DefaultHistory>,
+    writer: &mut dyn Write,
+) {
+    let history = rl.history();
+    let total = history.len();
+    if !args.is_empty() {
+        let history_limit: usize = args[0].parse().unwrap();
+
+        let start = total.saturating_sub(history_limit);
+
+        for (i, record) in rl.history().iter().enumerate().skip(start) {
+            writeln!(writer, " {} {}", i + 1, record).unwrap();
+        }
+    } else {
+        for (i, record) in rl.history().iter().enumerate() {
+            writeln!(writer, " {} {}", i + 1, record).unwrap();
+        }
     }
 }
 
