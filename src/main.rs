@@ -92,6 +92,7 @@ fn read_input(
     hist_file: &Option<String>,
 ) {
     let parts = shell_words::split(cmd).unwrap();
+    let parts = expand_vars(parts);
     let slices: Vec<&str> = parts.iter().map(|s| s.as_str()).collect();
     if slices.is_empty() {
         return;
@@ -142,6 +143,27 @@ fn read_input(
         "declare" => cmd_declare(slices[1..].to_vec(), &mut io::stdout().lock()),
         _ => run_external_cmd(slices, background),
     }
+}
+
+fn expand_vars(parts: Vec<String>) -> Vec<String> {
+    let store = STORE.lock().unwrap();
+    let re =
+        regex::Regex::new(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*").unwrap();
+    parts
+        .into_iter()
+        .map(|part| {
+            re.replace_all(&part, |caps: &regex::Captures| {
+                let m = &caps[0];
+                let name = if m.starts_with("${") {
+                    &m[2..m.len() - 1]
+                } else {
+                    &m[1..]
+                };
+                store.get(name).cloned().unwrap_or_default()
+            })
+            .to_string()
+        })
+        .collect()
 }
 
 fn cmd_declare(args: Vec<&str>, writer: &mut dyn Write) {
