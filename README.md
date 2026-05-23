@@ -1,4 +1,4 @@
-# Rush
+# Rush 🦀 >_
 
 A POSIX-like shell implementation written in Rust.
 
