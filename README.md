@@ -1,4 +1,3 @@
-
 # Rush
 
 A POSIX-like shell implementation written in Rust.
@@ -113,11 +112,42 @@ All shell state is stored in `LazyLock<Mutex<...>>` statics:
 | `anyhow` / `thiserror` | Error handling |
 | `bytes` | Buffer management |
 
-## Building & Running
+## Installation
+
+### Pre-built binary (via GitHub Releases)
+
+**Linux (x86_64 / ARM64)**
+```sh
+curl -LO https://github.com/<user>/rush/releases/latest/download/rush.gz
+gunzip rush.gz && chmod +x rush && sudo mv rush /usr/local/bin/
+```
+
+**macOS (Intel / Apple Silicon)**
+```sh
+curl -LO https://github.com/<user>/rush/releases/latest/download/rush.gz
+gunzip rush.gz && chmod +x rush && sudo mv rush /usr/local/bin/
+```
+
+**Windows (x86_64)**
+```powershell
+curl -LO https://github.com/<user>/rush/releases/latest/download/rush.exe.gz
+gunzip rush.exe.gz
+.\rush.exe
+```
+
+### From source
+
+Requires Rust 1.75+.
+
+```sh
+cargo install --git https://github.com/<user>/rush
+```
+
+### Build locally
 
 ```sh
 cargo build --release
-cargo run
+./target/release/rush
 ```
 ## Want to know more
 
