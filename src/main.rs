@@ -51,7 +51,7 @@ fn main() {
         match rl.readline("$ ") {
             Ok(line) => {
                 rl.add_history_entry(line.as_str()).unwrap();
-                read_input(line.trim(), &rl);
+                read_input(line.trim(), &mut rl);
             }
             Err(ReadlineError::Interrupted) => break,
             Err(ReadlineError::Eof) => break,
@@ -63,7 +63,7 @@ fn main() {
     }
 }
 
-fn read_input(cmd: &str, rl: &Editor<ShellCompleter, DefaultHistory>) {
+fn read_input(cmd: &str, rl: &mut Editor<ShellCompleter, DefaultHistory>) {
     let parts = shell_words::split(cmd).unwrap();
     let slices: Vec<&str> = parts.iter().map(|s| s.as_str()).collect();
     if slices.is_empty() {
@@ -113,12 +113,16 @@ fn read_input(cmd: &str, rl: &Editor<ShellCompleter, DefaultHistory>) {
 
 fn cmd_history(
     args: Vec<&str>,
-    rl: &Editor<ShellCompleter, DefaultHistory>,
+    rl: &mut Editor<ShellCompleter, DefaultHistory>,
     writer: &mut dyn Write,
 ) {
     let history = rl.history();
     let total = history.len();
-    if !args.is_empty() {
+    if !args.is_empty() && args[0] == "-r" {
+        let path = args[1];
+
+        rl.load_history(path).unwrap();
+    } else if !args.is_empty() {
         let history_limit: usize = args[0].parse().unwrap();
 
         let start = total.saturating_sub(history_limit);
