@@ -27,10 +27,11 @@ struct Job {
     command: String,
 }
 
-const BUILTINS: [&str; 8] = [
-    "echo", "exit", "type", "pwd", "cd", "complete", "jobs", "history",
+const BUILTINS: [&str; 9] = [
+    "echo", "exit", "type", "pwd", "cd", "complete", "jobs", "history", "declare",
 ];
-
+pub(crate) static STORE: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 pub(crate) static COMPLETION_SPEC: LazyLock<Mutex<HashMap<String, String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -138,7 +139,34 @@ fn read_input(
             &mut io::stdout().lock(),
             last_appended,
         ),
+        "declare" => cmd_declare(slices[1..].to_vec(), &mut io::stdout().lock()),
         _ => run_external_cmd(slices, background),
+    }
+}
+
+fn cmd_declare(args: Vec<&str>, writer: &mut dyn Write) {
+    let mut store = STORE.lock().unwrap();
+
+    let rgx = regex::Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$").unwrap();
+    if !args.is_empty() && args[0] == "-p" {
+        let variable = args[1];
+        if let Some(value) = store.get(variable) {
+            writeln!(writer, "declare -- {}=\"{}\"", variable, value).unwrap();
+        } else {
+            writeln!(writer, "declare: {}: not found", variable).unwrap();
+        }
+    } else if !args.is_empty() {
+        for arg in args.iter() {
+            if let Some((key, value)) = arg.split_once("=")
+                && !key.is_empty()
+                && !value.is_empty()
+                && rgx.is_match(key)
+            {
+                store.insert(key.to_string(), value.to_string());
+            } else {
+                writeln!(writer, "declare: `{}': not a valid identifier", arg).unwrap();
+            }
+        }
     }
 }
 
