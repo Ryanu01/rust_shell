@@ -41,6 +41,7 @@ impl Completer for ShellCompleter {
             "complete".to_string(),
             "jobs".to_string(),
             "history".to_string(),
+            "declare".to_string(),
         ];
 
         if let Ok(path_var) = env::var("PATH") {
