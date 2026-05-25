@@ -54,6 +54,7 @@ pub struct App {
     cwd: String,
     completions: Vec<String>,
     completion_start: usize,
+    mouse_capture: bool,
 }
 
 impl App {
@@ -72,6 +73,7 @@ impl App {
             cwd,
             completions: Vec::new(),
             completion_start: 0,
+            mouse_capture: true,
         }
     }
 
@@ -136,13 +138,32 @@ impl App {
 
         // Status bar
         let job_count = JOBS.lock().unwrap().len();
+        let mode_indicator = if self.mouse_capture {
+            " [F2] select "
+        } else {
+            " [SELECT] F2 "
+        };
+        let mode_style = if self.mouse_capture {
+            Style::default()
+                .fg(Color::Rgb(150, 150, 150))
+                .bg(Color::Rgb(30, 30, 30))
+        } else {
+            Style::default().fg(Color::Yellow).bg(Color::Rgb(60, 30, 0))
+        };
         let status_text = format!(
-            " {}  |  jobs: {}  |  [Ctrl+D] exit  |  [Ctrl+L] clear",
-            self.cwd, job_count
+            " {}  |  jobs: {}  |  [Ctrl+D] exit  |  [Ctrl+L] clear  |  [Ctrl+Shift+C] copy  |  [Ctrl+Shift+V] paste{}",
+            self.cwd, job_count, mode_indicator,
         );
         let status_para = Paragraph::new(Line::raw(status_text))
             .style(Style::default().fg(Color::White).bg(Color::Rgb(30, 30, 30)));
         frame.render_widget(status_para, status_area);
+
+        let mode_x = area.width.saturating_sub(mode_indicator.len() as u16 + 1);
+        let mode_para = Paragraph::new(Line::raw(mode_indicator)).style(mode_style);
+        frame.render_widget(
+            mode_para,
+            Rect::new(mode_x, 0, area.width.saturating_sub(mode_x), 1),
+        );
 
         // Output pane
         let output_height = output_area.height.saturating_sub(1) as usize;
@@ -210,23 +231,21 @@ impl App {
         } else {
             self.output_lines[start..]
                 .iter()
-                .map(|(text, style)| {
-                    match style {
-                        OutputStyle::Command => Line::styled(
-                            format!("$ {}", text),
-                            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-                        ),
-                        OutputStyle::Directory => Line::styled(
-                            text.clone(),
-                            Style::default().fg(Color::Red),
-                        ),
-                        OutputStyle::Executable => Line::styled(
-                            text.clone(),
-                            Style::default().fg(Color::Green),
-                        ),
-                        OutputStyle::Plain if text.is_empty() => Line::raw(""),
-                        OutputStyle::Plain => Line::raw(text.clone()),
+                .map(|(text, style)| match style {
+                    OutputStyle::Command => Line::styled(
+                        format!("$ {}", text),
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    OutputStyle::Directory => {
+                        Line::styled(text.clone(), Style::default().fg(Color::Red))
                     }
+                    OutputStyle::Executable => {
+                        Line::styled(text.clone(), Style::default().fg(Color::Green))
+                    }
+                    OutputStyle::Plain if text.is_empty() => Line::raw(""),
+                    OutputStyle::Plain => Line::raw(text.clone()),
                 })
                 .collect()
         };
@@ -342,7 +361,8 @@ impl App {
                 if key.modifiers == KeyModifiers::CONTROL {
                     match c {
                         'c' => {
-                            self.output_lines.push(("^C".to_string(), OutputStyle::Plain));
+                            self.output_lines
+                                .push(("^C".to_string(), OutputStyle::Plain));
                             self.input.clear();
                             self.cursor = 0;
                             self.history_idx = None;
@@ -359,6 +379,22 @@ impl App {
                         'l' => {
                             self.output_lines.clear();
                             self.scroll_offset = 0;
+                        }
+                        'C' => {
+                            self.copy_output_to_clipboard();
+                        }
+                        'V' => {
+                            self.paste_from_clipboard();
+                        }
+                        _ => {}
+                    }
+                } else if key.modifiers == (KeyModifiers::CONTROL | KeyModifiers::SHIFT) {
+                    match c {
+                        'c' | 'C' => {
+                            self.copy_output_to_clipboard();
+                        }
+                        'v' | 'V' => {
+                            self.paste_from_clipboard();
                         }
                         _ => {}
                     }
@@ -444,6 +480,9 @@ impl App {
             }
             KeyCode::Tab => {
                 self.handle_tab();
+            }
+            KeyCode::F(2) => {
+                self.toggle_mouse_capture();
             }
             _ => {}
         }
@@ -588,6 +627,140 @@ impl App {
             .unwrap_or_else(|_| "?".to_string());
     }
 
+    fn toggle_mouse_capture(&mut self) {
+        self.mouse_capture = !self.mouse_capture;
+        if self.mouse_capture {
+            let _ = execute!(
+                std::io::stdout(),
+                ratatui::crossterm::event::EnableMouseCapture
+            );
+            self.output_lines.push((
+                "Mouse capture enabled (F2 to toggle)".into(),
+                OutputStyle::Plain,
+            ));
+        } else {
+            let _ = execute!(
+                std::io::stdout(),
+                ratatui::crossterm::event::DisableMouseCapture
+            );
+            self.output_lines.push((
+                "Selection mode: click and drag to select text, Ctrl+O to copy".into(),
+                OutputStyle::Plain,
+            ));
+        }
+    }
+
+    fn set_clipboard_text(text: &str) -> Result<(), String> {
+        if let Ok(mut ctx) = arboard::Clipboard::new() {
+            return ctx.set_text(text).map_err(|e| format!("arboard: {}", e));
+        }
+        // Fallback to external tools
+        #[cfg(target_os = "linux")]
+        {
+            for (cmd, args) in [
+                ("wl-copy", &[] as &[&str]),
+                ("xclip", &["-selection", "clipboard"] as &[&str]),
+                ("xsel", &["-b"] as &[&str]),
+            ] {
+                if let Ok(mut child) = Command::new(cmd).args(args).stdin(Stdio::piped()).spawn() {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        let _ = stdin.write_all(text.as_bytes());
+                        let _ = child.wait();
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(mut child) = Command::new("pbcopy").stdin(Stdio::piped()).spawn() {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(text.as_bytes());
+                    let _ = child.wait();
+                    return Ok(());
+                }
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(mut child) = Command::new("clip").stdin(Stdio::piped()).spawn() {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(text.as_bytes());
+                    let _ = child.wait();
+                    return Ok(());
+                }
+            }
+        }
+        Err("no clipboard tool found (try installing xclip, wl-clipboard, or pbcopy)".into())
+    }
+
+    fn get_clipboard_text() -> Result<String, String> {
+        if let Ok(mut ctx) = arboard::Clipboard::new() {
+            return ctx.get_text().map_err(|e| format!("arboard: {}", e));
+        }
+        #[cfg(target_os = "linux")]
+        {
+            for cmd in &["wl-paste", "xclip -selection clipboard -o", "xsel -b"] {
+                let parts: Vec<&str> = cmd.split_whitespace().collect();
+                if let Ok(output) = Command::new(parts[0]).args(&parts[1..]).output() {
+                    if output.status.success() {
+                        let text = String::from_utf8_lossy(&output.stdout).to_string();
+                        if !text.is_empty() {
+                            return Ok(text);
+                        }
+                    }
+                }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(output) = Command::new("pbpaste").output() {
+                if output.status.success() {
+                    let text = String::from_utf8_lossy(&output.stdout).to_string();
+                    if !text.is_empty() {
+                        return Ok(text);
+                    }
+                }
+            }
+        }
+        Err("no clipboard tool found (try installing xclip, wl-clipboard, or pbpaste)".into())
+    }
+
+    fn copy_output_to_clipboard(&mut self) {
+        let text: String = self
+            .output_lines
+            .iter()
+            .map(|(line, _)| line.as_str())
+            .collect::<Vec<&str>>()
+            .join("\n");
+        if text.is_empty() {
+            return;
+        }
+        match Self::set_clipboard_text(&text) {
+            Ok(()) => self
+                .output_lines
+                .push(("Copied output to clipboard".into(), OutputStyle::Plain)),
+            Err(e) => self
+                .output_lines
+                .push((format!("Clipboard error: {}", e), OutputStyle::Plain)),
+        }
+    }
+
+    fn paste_from_clipboard(&mut self) {
+        match Self::get_clipboard_text() {
+            Ok(text) => {
+                for c in text.chars() {
+                    self.input.insert(self.cursor, c);
+                    self.cursor += 1;
+                }
+                self.history_idx = None;
+            }
+            Err(e) => self
+                .output_lines
+                .push((format!("Clipboard error: {}", e), OutputStyle::Plain)),
+        }
+    }
+
     fn cmd_ls_tui(&mut self, args: &[&str]) {
         let path = args
             .iter()
@@ -598,8 +771,10 @@ impl App {
         let entries = match fs::read_dir(&path) {
             Ok(e) => e,
             Err(e) => {
-                self.output_lines
-                    .push((format!("ls: cannot access '{}': {}", path, e), OutputStyle::Plain));
+                self.output_lines.push((
+                    format!("ls: cannot access '{}': {}", path, e),
+                    OutputStyle::Plain,
+                ));
                 return;
             }
         };
@@ -641,13 +816,15 @@ impl App {
         executables.sort();
 
         for d in &dirs {
-            self.output_lines.push((format!("{}/", d), OutputStyle::Directory));
+            self.output_lines
+                .push((format!("{}/", d), OutputStyle::Directory));
         }
         for f in &files {
             self.output_lines.push((f.clone(), OutputStyle::Plain));
         }
         for e in &executables {
-            self.output_lines.push((format!("{}*", e), OutputStyle::Executable));
+            self.output_lines
+                .push((format!("{}*", e), OutputStyle::Executable));
         }
     }
 
@@ -722,8 +899,10 @@ impl App {
             let mut buf: Vec<u8> = Vec::new();
             cmd_cd(slices[1..].to_vec(), &mut buf);
             if !buf.is_empty() {
-                self.output_lines
-                    .push((String::from_utf8_lossy(&buf).to_string(), OutputStyle::Plain));
+                self.output_lines.push((
+                    String::from_utf8_lossy(&buf).to_string(),
+                    OutputStyle::Plain,
+                ));
             }
             return;
         }
@@ -740,8 +919,10 @@ impl App {
                 _ => {}
             }
             if !buf.is_empty() {
-                self.output_lines
-                    .push((String::from_utf8_lossy(&buf).to_string(), OutputStyle::Plain));
+                self.output_lines.push((
+                    String::from_utf8_lossy(&buf).to_string(),
+                    OutputStyle::Plain,
+                ));
             }
             return;
         }
@@ -764,18 +945,22 @@ impl App {
                 if !out.stdout.is_empty() {
                     let text = String::from_utf8_lossy(&out.stdout).to_string();
                     for line in text.lines() {
-                        self.output_lines.push((line.to_string(), OutputStyle::Plain));
+                        self.output_lines
+                            .push((line.to_string(), OutputStyle::Plain));
                     }
                 }
                 if !out.stderr.is_empty() {
                     let text = String::from_utf8_lossy(&out.stderr).to_string();
                     for line in text.lines() {
-                        self.output_lines.push((line.to_string(), OutputStyle::Plain));
+                        self.output_lines
+                            .push((line.to_string(), OutputStyle::Plain));
                     }
                 }
                 if !out.status.success() && out.stdout.is_empty() && out.stderr.is_empty() {
-                    self.output_lines
-                        .push((format!("{}: command not found", command), OutputStyle::Plain));
+                    self.output_lines.push((
+                        format!("{}: command not found", command),
+                        OutputStyle::Plain,
+                    ));
                 }
             }
             Err(e) => {
@@ -832,8 +1017,10 @@ impl App {
                     .spawn()
                     .is_err()
                 {
-                    self.output_lines
-                        .push((format!("{}: command not found", segment[0]), OutputStyle::Plain));
+                    self.output_lines.push((
+                        format!("{}: command not found", segment[0]),
+                        OutputStyle::Plain,
+                    ));
                     return;
                 }
             }
@@ -893,13 +1080,15 @@ impl App {
                 if !out.stdout.is_empty() {
                     let text = String::from_utf8_lossy(&out.stdout);
                     for line in text.lines() {
-                        self.output_lines.push((line.to_string(), OutputStyle::Plain));
+                        self.output_lines
+                            .push((line.to_string(), OutputStyle::Plain));
                     }
                 }
                 if !out.stderr.is_empty() {
                     let text = String::from_utf8_lossy(&out.stderr);
                     for line in text.lines() {
-                        self.output_lines.push((line.to_string(), OutputStyle::Plain));
+                        self.output_lines
+                            .push((line.to_string(), OutputStyle::Plain));
                     }
                 }
             }
@@ -936,7 +1125,8 @@ impl App {
                     if !buf.is_empty() {
                         let text = String::from_utf8_lossy(&buf);
                         for line in text.lines() {
-                            self.output_lines.push((line.to_string(), OutputStyle::Plain));
+                            self.output_lines
+                                .push((line.to_string(), OutputStyle::Plain));
                         }
                     }
                 } else {
@@ -967,13 +1157,15 @@ impl App {
                                 if !out.stdout.is_empty() {
                                     let text = String::from_utf8_lossy(&out.stdout);
                                     for line in text.lines() {
-                                        self.output_lines.push((line.to_string(), OutputStyle::Plain));
+                                        self.output_lines
+                                            .push((line.to_string(), OutputStyle::Plain));
                                     }
                                 }
                                 if !out.stderr.is_empty() {
                                     let text = String::from_utf8_lossy(&out.stderr);
                                     for line in text.lines() {
-                                        self.output_lines.push((line.to_string(), OutputStyle::Plain));
+                                        self.output_lines
+                                            .push((line.to_string(), OutputStyle::Plain));
                                     }
                                 }
                             }
@@ -983,7 +1175,8 @@ impl App {
                         }
                     }
                     Err(e) => {
-                        self.output_lines.push((format!("{}: {}", cmd, e), OutputStyle::Plain));
+                        self.output_lines
+                            .push((format!("{}: {}", cmd, e), OutputStyle::Plain));
                         return;
                     }
                 }
