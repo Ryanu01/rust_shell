@@ -43,6 +43,35 @@ A POSIX-like shell implementation written in Rust.
 - Custom completion specs via `complete -C`
 - Multi-column display on repeated Tab press
 
+### TUI Mode
+
+A full-screen terminal UI powered by `ratatui` and `crossterm`. Launch automatically (unless `--no-tui` is passed):
+
+```
+rush              # starts in TUI mode
+rush --no-tui     # falls back to classic rustyline REPL
+```
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Execute command |
+| `Tab` | Trigger / cycle completions |
+| `Up` / `Down` | Navigate history |
+| `Ctrl+D` | Exit (on empty input) |
+| `Ctrl+C` | Cancel current input |
+| `Ctrl+U` | Clear input line |
+| `Ctrl+L` | Clear output pane |
+| `Ctrl+Shift+C` | Copy output to clipboard |
+| `Ctrl+Shift+V` | Paste from clipboard |
+| `PageUp` / `PageDown` | Scroll output up / down |
+| `Mouse wheel` | Scroll output |
+| `F2` | Toggle mouse capture (for text selection) |
+
+- Colored `$` prompt, output pane, and completion popup
+- Directory entries colored red, executables green with `*` suffix
+- Status bar showing `cwd`, background job count, and keybindings
+- Built-in `ls` command with colorized output
+
 ### Variable Expansion
 
 - `$NAME` and `${NAME}` syntax
@@ -55,15 +84,20 @@ A POSIX-like shell implementation written in Rust.
 
 ```
 main.rs
-├── main()                    ─ REPL loop using rustyline
-│   ├── readline()            ─ Read input with prompt "$ "
-│   └── read_input()          ─ Parse and dispatch command
-│       ├── shell_words::split    ─ Tokenize (respects quotes)
-│       ├── expand_vars()         ─ Replace $VAR / ${VAR} with values
-│       ├── Filter empty strings  ─ Remove words that became empty
-│       ├── Pipeline detection    ─ Split on "|"
-│       ├── Builtin dispatch      ─ Match command name
-│       └── run_external_cmd()    ─ Spawn child process
+├── main()                    ─ Entry: TUI (ratatui) or rustyline REPL
+│   ├── tui::App::run()       ─ Full-screen TUI (feature = "tui")
+│   │   ├── draw()            ─ Render status bar, output pane, input bar
+│   │   ├── handle_events()   ─ Key / mouse / resize dispatch
+│   │   └── execute_cmd()     ─ Parse & execute within TUI
+│   └── (rustyline fallback)  ─ Classic REPL with "$ " prompt
+│       ├── readline()        ─ Read input line
+│       └── read_input()      ─ Parse and dispatch command
+│           ├── shell_words::split    ─ Tokenize (respects quotes)
+│           ├── expand_vars()         ─ Replace $VAR / ${VAR}
+│           ├── Filter empty strings  ─ Remove empty words
+│           ├── Pipeline detection    ─ Split on "|"
+│           ├── Builtin dispatch      ─ Match command name
+│           └── run_external_cmd()    ─ Spawn child process
 │
 ├── expand_vars()             ─ Variable expansion logic
 ├── cmd_declare()             ─ declare builtin
@@ -81,13 +115,19 @@ main.rs
 │   └── run_sequential_pipeline()           ─ Sequential (builtins)
 └── reap_jobs()               ─ Background job reaper
 
+tui/                          ─ TUI mode modules (feature = "tui")
+├── app.rs                    ─ App state, run loop, job reaping
+├── ui.rs                     ─ Ratatui rendering (status, output, input)
+├── input.rs                  ─ Keyboard/mouse input, completions, clipboard
+└── exec.rs                   ─ Command execution within TUI
+
 helper.rs                     ─ rustyline Completer implementation
 utils.rs                      ─ File path completion utilities
 ```
 
 ### Global State
 
-All shell state is stored in `LazyLock<Mutex<...>>` statics:
+All shell state is stored in `LazyLock<Mutex<...>>` statics (shared between TUI and REPL modes):
 
 - `STORE` — `HashMap<String, String>` for shell variables (`declare`)
 - `COMPLETION_SPEC` — `HashMap<String, String>` mapping command names to completer executables
@@ -111,6 +151,8 @@ All shell state is stored in `LazyLock<Mutex<...>>` statics:
 | `regex` | Variable name pattern matching in expansion |
 | `anyhow` / `thiserror` | Error handling |
 | `bytes` | Buffer management |
+| `ratatui` / `crossterm` | TUI rendering and terminal I/O (feature `tui`) |
+| `arboard` | Clipboard access in TUI mode (feature `tui`) |
 
 ## Installation
 
@@ -146,7 +188,8 @@ cargo install --git https://github.com/Ryanu01/rush
 ### Build locally
 
 ```sh
-cargo build --release
+cargo build --release                     # includes TUI via default features
+cargo build --release --no-default-features  # REPL-only, no TUI
 ./target/release/rush
 ```
 ## Want to know more
