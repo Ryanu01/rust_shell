@@ -1,5 +1,7 @@
 mod helper;
 mod utils;
+#[cfg(feature = "tui")]
+mod tui;
 use helper::ShellCompleter;
 
 use rustyline::history::History;
@@ -21,7 +23,7 @@ use std::{
     process::{self, Command, Stdio},
 };
 
-struct Job {
+pub(crate) struct Job {
     id: usize,
     child: Child,
     command: String,
@@ -54,12 +56,23 @@ fn main() {
         let _ = rl.load_history(path);
     }
 
+    #[cfg(feature = "tui")]
+    if !std::env::args().any(|a| a == "--no-tui") {
+        let mut app = tui::App::new();
+        let _ = app.run();
+        return;
+    }
+
     loop {
-        reap_jobs(false, &mut io::stdout().lock());
+        {
+            let mut stdout = io::stdout().lock();
+            reap_jobs(false, &mut stdout);
+        }
         match rl.readline("$ ") {
             Ok(line) => {
                 rl.add_history_entry(line.as_str()).unwrap();
-                read_input(line.trim(), &mut rl, &mut last_appended, &hist_file);
+                let mut stdout = io::stdout().lock();
+                read_input(line.trim(), &mut rl, &mut last_appended, &hist_file, &mut stdout);
             }
             Err(ReadlineError::Interrupted) => {
                 if let Some(ref path) = hist_file {
@@ -74,7 +87,8 @@ fn main() {
                 break;
             }
             Err(err) => {
-                println!("Error: {:?}", err);
+                let mut stdout = io::stdout().lock();
+                writeln!(&mut stdout, "Error: {:?}", err).ok();
 
                 if let Some(ref path) = hist_file {
                     let _ = rl.save_history(path);
@@ -90,6 +104,7 @@ fn read_input(
     rl: &mut Editor<ShellCompleter, DefaultHistory>,
     last_appended: &mut usize,
     hist_file: &Option<String>,
+    writer: &mut dyn Write,
 ) {
     let parts = shell_words::split(cmd).unwrap();
     let parts = expand_vars(parts);
@@ -121,7 +136,7 @@ fn read_input(
             start = pos + 1;
         }
         segments.push(slices[start..].to_vec());
-        run_pipeline(segments);
+        run_pipeline(segments, writer);
         return;
     }
 
@@ -129,24 +144,19 @@ fn read_input(
 
     match command {
         "exit" => cmd_exit(rl, hist_file),
-        "echo" => cmd_echo(slices[1..].to_vec(), &mut io::stdout().lock()),
-        "type" => cmd_type(slices[1..].to_vec(), &mut io::stdout().lock()),
-        "pwd" => cmd_pwd(&mut io::stdout().lock()),
-        "cd" => cmd_cd(slices[1..].to_vec(), &mut io::stdout().lock()),
-        "complete" => cmd_complete(slices[1..].to_vec(), &mut io::stdout().lock()),
-        "jobs" => cmd_jobs(slices[1..].to_vec(), &mut io::stdout().lock()),
-        "history" => cmd_history(
-            slices[1..].to_vec(),
-            rl,
-            &mut io::stdout().lock(),
-            last_appended,
-        ),
-        "declare" => cmd_declare(slices[1..].to_vec(), &mut io::stdout().lock()),
-        _ => run_external_cmd(slices, background),
+        "echo" => cmd_echo(slices[1..].to_vec(), writer),
+        "type" => cmd_type(slices[1..].to_vec(), writer),
+        "pwd" => cmd_pwd(writer),
+        "cd" => cmd_cd(slices[1..].to_vec(), writer),
+        "complete" => cmd_complete(slices[1..].to_vec(), writer),
+        "jobs" => cmd_jobs(slices[1..].to_vec(), writer),
+        "history" => cmd_history(slices[1..].to_vec(), rl, writer, last_appended),
+        "declare" => cmd_declare(slices[1..].to_vec(), writer),
+        _ => run_external_cmd(slices, background, writer),
     }
 }
 
-fn expand_vars(parts: Vec<String>) -> Vec<String> {
+pub(crate) fn expand_vars(parts: Vec<String>) -> Vec<String> {
     let store = STORE.lock().unwrap();
     let re =
         regex::Regex::new(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*").unwrap();
@@ -167,7 +177,7 @@ fn expand_vars(parts: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-fn cmd_declare(args: Vec<&str>, writer: &mut dyn Write) {
+pub(crate) fn cmd_declare(args: Vec<&str>, writer: &mut dyn Write) {
     let mut store = STORE.lock().unwrap();
 
     let rgx = regex::Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$").unwrap();
@@ -292,10 +302,10 @@ fn reap_jobs(print_running: bool, writer: &mut dyn Write) {
     }
 }
 #[allow(unused_variables)]
-fn cmd_jobs(_args: Vec<&str>, writer: &mut dyn Write) {
+pub(crate) fn cmd_jobs(_args: Vec<&str>, writer: &mut dyn Write) {
     reap_jobs(true, writer);
 }
-fn cmd_complete(args: Vec<&str>, writer: &mut dyn Write) {
+pub(crate) fn cmd_complete(args: Vec<&str>, writer: &mut dyn Write) {
     let mut map = COMPLETION_SPEC.lock().unwrap();
     let mut i = 0;
     let mut cmd = None;
@@ -353,7 +363,7 @@ fn cmd_complete(args: Vec<&str>, writer: &mut dyn Write) {
     }
 }
 
-fn cmd_echo(args: Vec<&str>, writer: &mut dyn Write) {
+pub(crate) fn cmd_echo(args: Vec<&str>, writer: &mut dyn Write) {
     let mut output = Vec::new();
     let mut stdout_redirect = None;
     let mut stderr_redirect = None;
@@ -428,7 +438,7 @@ fn cmd_echo(args: Vec<&str>, writer: &mut dyn Write) {
     }
 }
 
-fn cmd_type(args: Vec<&str>, writer: &mut dyn Write) {
+pub(crate) fn cmd_type(args: Vec<&str>, writer: &mut dyn Write) {
     if args.is_empty() {
         return;
     }
@@ -443,7 +453,7 @@ fn cmd_type(args: Vec<&str>, writer: &mut dyn Write) {
     }
 }
 
-fn is_builtin(cmd: &str) -> bool {
+pub(crate) fn is_builtin(cmd: &str) -> bool {
     BUILTINS.contains(&cmd)
 }
 
@@ -459,28 +469,23 @@ fn execute_builtin(cmd: &str, args: Vec<&str>, writer: &mut dyn Write) {
     }
 }
 
-fn run_pipeline(segments: Vec<Vec<&str>>) {
+fn run_pipeline(segments: Vec<Vec<&str>>, writer: &mut dyn Write) {
     for segment in &segments {
         if !is_builtin(segment[0]) && find_executable_in_path(segment[0]).is_none() {
-            writeln!(
-                &mut io::stdout().lock(),
-                "{}: command not found",
-                segment[0]
-            )
-            .unwrap();
+            writeln!(writer, "{}: command not found", segment[0]).unwrap();
             return;
         }
     }
 
     let has_builtins = segments.iter().any(|s| is_builtin(s[0]));
     if has_builtins {
-        run_sequential_pipeline(segments);
+        run_sequential_pipeline(segments, writer);
     } else {
-        run_concurrent_external_pipeline(segments);
+        run_concurrent_external_pipeline(segments, writer);
     }
 }
 
-fn run_concurrent_external_pipeline(segments: Vec<Vec<&str>>) {
+fn run_concurrent_external_pipeline(segments: Vec<Vec<&str>>, _writer: &mut dyn Write) {
     let n = segments.len();
     let mut child_stdins: Vec<Option<ChildStdin>> = Vec::new();
     let mut child_stdouts: Vec<Option<ChildStdout>> = Vec::new();
@@ -525,7 +530,7 @@ fn run_concurrent_external_pipeline(segments: Vec<Vec<&str>>) {
     }
 }
 
-fn run_sequential_pipeline(segments: Vec<Vec<&str>>) {
+fn run_sequential_pipeline(segments: Vec<Vec<&str>>, writer: &mut dyn Write) {
     let n = segments.len();
     let mut prev_output: Option<Vec<u8>> = None;
 
@@ -536,7 +541,7 @@ fn run_sequential_pipeline(segments: Vec<Vec<&str>>) {
 
         if is_builtin(cmd) {
             if is_last {
-                execute_builtin(cmd, args, &mut io::stdout().lock());
+                execute_builtin(cmd, args, writer);
             } else {
                 let mut buf: Vec<u8> = Vec::new();
                 execute_builtin(cmd, args, &mut buf);
@@ -573,15 +578,15 @@ fn run_sequential_pipeline(segments: Vec<Vec<&str>>) {
     }
 }
 
-fn cmd_pwd(writer: &mut dyn Write) {
+pub(crate) fn cmd_pwd(writer: &mut dyn Write) {
     writeln!(writer, "{}", env::current_dir().unwrap().display()).unwrap();
 }
 
-fn run_external_cmd(parts: Vec<&str>, background: bool) {
+fn run_external_cmd(parts: Vec<&str>, background: bool, writer: &mut dyn Write) {
     let command = parts[0];
     let mut append = false;
     if find_executable_in_path(command).is_none() {
-        println!("{}: command not found", command);
+        writeln!(writer, "{}: command not found", command).unwrap();
         return;
     }
 
@@ -671,13 +676,13 @@ fn run_external_cmd(parts: Vec<&str>, background: bool) {
             command: parts.join(" "),
         });
 
-        println!("[{}] {}", job_id, pid);
+        writeln!(writer, "[{}] {}", job_id, pid).unwrap();
     } else {
         cmd.status().unwrap();
     }
 }
 
-fn cmd_cd(args: Vec<&str>, writer: &mut dyn Write) {
+pub(crate) fn cmd_cd(args: Vec<&str>, writer: &mut dyn Write) {
     let target = if args.is_empty() { "~" } else { args[0] };
 
     let path: PathBuf = if target == "~" {

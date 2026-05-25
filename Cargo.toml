@@ -3,8 +3,14 @@ name = "rush"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["tui"]
+tui = ["ratatui", "crossterm"]
+
 [dependencies]
 pathsearch = "0.2.0"
 regex = "1.12.3"
 rustyline = "18.0.0"
 shell-words = "1.1.1"
+ratatui = { version = "0.30", features = ["crossterm"], optional = true }
+crossterm = { version = "0.28", optional = true }
