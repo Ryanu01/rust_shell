@@ -8,6 +8,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
 use std::env;
+use std::fs;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -19,10 +20,33 @@ use crate::{
     cmd_type, is_builtin,
 };
 
+#[derive(Clone, Copy, PartialEq)]
+enum OutputStyle {
+    Plain,
+    Command,
+    Directory,
+    Executable,
+}
+
+fn is_executable(path: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        path.metadata()
+            .map(|m| m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        false
+    }
+}
+
 pub struct App {
     input: String,
     cursor: usize,
-    output_lines: Vec<(String, bool)>,
+    output_lines: Vec<(String, OutputStyle)>,
     scroll_offset: usize,
     history: Vec<String>,
     history_idx: Option<usize>,
@@ -89,7 +113,7 @@ impl App {
                 let cmd = jobs[it].command.clone();
                 let id = jobs[it].id;
                 self.output_lines
-                    .push((format!("[{}] Done  {}", id, cmd), false));
+                    .push((format!("[{}] Done  {}", id, cmd), OutputStyle::Plain));
                 jobs.remove(it);
             } else {
                 it += 1;
@@ -186,18 +210,22 @@ impl App {
         } else {
             self.output_lines[start..]
                 .iter()
-                .map(|(text, is_cmd)| {
-                    if *is_cmd {
-                        Line::styled(
+                .map(|(text, style)| {
+                    match style {
+                        OutputStyle::Command => Line::styled(
                             format!("$ {}", text),
-                            Style::default()
-                                .fg(Color::Green)
-                                .add_modifier(Modifier::BOLD),
-                        )
-                    } else if text.is_empty() {
-                        Line::raw("")
-                    } else {
-                        Line::raw(text.clone())
+                            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                        ),
+                        OutputStyle::Directory => Line::styled(
+                            text.clone(),
+                            Style::default().fg(Color::Red),
+                        ),
+                        OutputStyle::Executable => Line::styled(
+                            text.clone(),
+                            Style::default().fg(Color::Green),
+                        ),
+                        OutputStyle::Plain if text.is_empty() => Line::raw(""),
+                        OutputStyle::Plain => Line::raw(text.clone()),
                     }
                 })
                 .collect()
@@ -222,7 +250,17 @@ impl App {
             let items: Vec<ListItem> = self
                 .completions
                 .iter()
-                .map(|c| ListItem::new(c.as_str()))
+                .map(|c| {
+                    let path = std::path::Path::new(c.trim_end_matches('/'));
+                    let style = if path.is_dir() {
+                        Style::default().fg(Color::Red)
+                    } else if is_executable(path) {
+                        Style::default().fg(Color::Green)
+                    } else {
+                        Style::default()
+                    };
+                    ListItem::new(c.as_str()).style(style)
+                })
                 .collect();
             let popup = List::new(items)
                 .block(
@@ -304,7 +342,7 @@ impl App {
                 if key.modifiers == KeyModifiers::CONTROL {
                     match c {
                         'c' => {
-                            self.output_lines.push(("^C".to_string(), false));
+                            self.output_lines.push(("^C".to_string(), OutputStyle::Plain));
                             self.input.clear();
                             self.cursor = 0;
                             self.history_idx = None;
@@ -394,10 +432,10 @@ impl App {
                 let cmd = self.input.trim().to_string();
                 if !cmd.is_empty() {
                     self.history.push(cmd.clone());
-                    self.output_lines.push((cmd.clone(), true));
+                    self.output_lines.push((cmd.clone(), OutputStyle::Command));
                     self.execute_cmd(&cmd);
                     self.update_cwd();
-                    self.output_lines.push((String::new(), false));
+                    self.output_lines.push((String::new(), OutputStyle::Plain));
                 }
                 self.input.clear();
                 self.cursor = 0;
@@ -550,12 +588,75 @@ impl App {
             .unwrap_or_else(|_| "?".to_string());
     }
 
+    fn cmd_ls_tui(&mut self, args: &[&str]) {
+        let path = args
+            .iter()
+            .find(|a| !a.starts_with('-'))
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| ".".to_string());
+
+        let entries = match fs::read_dir(&path) {
+            Ok(e) => e,
+            Err(e) => {
+                self.output_lines
+                    .push((format!("ls: cannot access '{}': {}", path, e), OutputStyle::Plain));
+                return;
+            }
+        };
+
+        let mut dirs = Vec::new();
+        let mut files = Vec::new();
+        let mut executables = Vec::new();
+
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            match entry.file_type() {
+                Ok(t) if t.is_dir() => dirs.push(name),
+                Ok(t) if t.is_symlink() => {
+                    if let Ok(meta) = entry.metadata() {
+                        if meta.is_dir() {
+                            dirs.push(name);
+                        } else {
+                            files.push(name);
+                        }
+                    } else {
+                        files.push(name);
+                    }
+                }
+                _ => {
+                    if is_executable(&entry.path()) {
+                        executables.push(name);
+                    } else {
+                        files.push(name);
+                    }
+                }
+            }
+        }
+
+        dirs.sort();
+        files.sort();
+        executables.sort();
+
+        for d in &dirs {
+            self.output_lines.push((format!("{}/", d), OutputStyle::Directory));
+        }
+        for f in &files {
+            self.output_lines.push((f.clone(), OutputStyle::Plain));
+        }
+        for e in &executables {
+            self.output_lines.push((format!("{}*", e), OutputStyle::Executable));
+        }
+    }
+
     fn execute_cmd(&mut self, cmd: &str) {
         let parts = match shell_words::split(cmd) {
             Ok(p) => p,
             Err(e) => {
                 self.output_lines
-                    .push((format!("rush: parse error: {}", e), false));
+                    .push((format!("rush: parse error: {}", e), OutputStyle::Plain));
                 return;
             }
         };
@@ -604,10 +705,15 @@ impl App {
             return;
         }
 
+        if command == "ls" {
+            self.cmd_ls_tui(&slices[1..]);
+            return;
+        }
+
         if command == "history" {
             for (i, entry) in self.history.iter().enumerate() {
                 self.output_lines
-                    .push((format!(" {} {}", i + 1, entry), false));
+                    .push((format!(" {} {}", i + 1, entry), OutputStyle::Plain));
             }
             return;
         }
@@ -617,7 +723,7 @@ impl App {
             cmd_cd(slices[1..].to_vec(), &mut buf);
             if !buf.is_empty() {
                 self.output_lines
-                    .push((String::from_utf8_lossy(&buf).to_string(), false));
+                    .push((String::from_utf8_lossy(&buf).to_string(), OutputStyle::Plain));
             }
             return;
         }
@@ -635,7 +741,7 @@ impl App {
             }
             if !buf.is_empty() {
                 self.output_lines
-                    .push((String::from_utf8_lossy(&buf).to_string(), false));
+                    .push((String::from_utf8_lossy(&buf).to_string(), OutputStyle::Plain));
             }
             return;
         }
@@ -658,23 +764,23 @@ impl App {
                 if !out.stdout.is_empty() {
                     let text = String::from_utf8_lossy(&out.stdout).to_string();
                     for line in text.lines() {
-                        self.output_lines.push((line.to_string(), false));
+                        self.output_lines.push((line.to_string(), OutputStyle::Plain));
                     }
                 }
                 if !out.stderr.is_empty() {
                     let text = String::from_utf8_lossy(&out.stderr).to_string();
                     for line in text.lines() {
-                        self.output_lines.push((line.to_string(), false));
+                        self.output_lines.push((line.to_string(), OutputStyle::Plain));
                     }
                 }
                 if !out.status.success() && out.stdout.is_empty() && out.stderr.is_empty() {
                     self.output_lines
-                        .push((format!("{}: command not found", command), false));
+                        .push((format!("{}: command not found", command), OutputStyle::Plain));
                 }
             }
             Err(e) => {
                 self.output_lines
-                    .push((format!("{}: {}", command, e), false));
+                    .push((format!("{}: {}", command, e), OutputStyle::Plain));
             }
         }
     }
@@ -699,11 +805,11 @@ impl App {
                     command: full_cmd.to_string(),
                 });
                 self.output_lines
-                    .push((format!("[{}] {}", job_id, pid), false));
+                    .push((format!("[{}] {}", job_id, pid), OutputStyle::Plain));
             }
             Err(e) => {
                 self.output_lines
-                    .push((format!("{}: {}", command, e), false));
+                    .push((format!("{}: {}", command, e), OutputStyle::Plain));
             }
         }
     }
@@ -727,7 +833,7 @@ impl App {
                     .is_err()
                 {
                     self.output_lines
-                        .push((format!("{}: command not found", segment[0]), false));
+                        .push((format!("{}: command not found", segment[0]), OutputStyle::Plain));
                     return;
                 }
             }
@@ -770,7 +876,7 @@ impl App {
                 }
                 Err(e) => {
                     self.output_lines
-                        .push((format!("{}: {}", seg[0], e), false));
+                        .push((format!("{}: {}", seg[0], e), OutputStyle::Plain));
                     return;
                 }
             }
@@ -787,13 +893,13 @@ impl App {
                 if !out.stdout.is_empty() {
                     let text = String::from_utf8_lossy(&out.stdout);
                     for line in text.lines() {
-                        self.output_lines.push((line.to_string(), false));
+                        self.output_lines.push((line.to_string(), OutputStyle::Plain));
                     }
                 }
                 if !out.stderr.is_empty() {
                     let text = String::from_utf8_lossy(&out.stderr);
                     for line in text.lines() {
-                        self.output_lines.push((line.to_string(), false));
+                        self.output_lines.push((line.to_string(), OutputStyle::Plain));
                     }
                 }
             }
@@ -830,7 +936,7 @@ impl App {
                     if !buf.is_empty() {
                         let text = String::from_utf8_lossy(&buf);
                         for line in text.lines() {
-                            self.output_lines.push((line.to_string(), false));
+                            self.output_lines.push((line.to_string(), OutputStyle::Plain));
                         }
                     }
                 } else {
@@ -861,13 +967,13 @@ impl App {
                                 if !out.stdout.is_empty() {
                                     let text = String::from_utf8_lossy(&out.stdout);
                                     for line in text.lines() {
-                                        self.output_lines.push((line.to_string(), false));
+                                        self.output_lines.push((line.to_string(), OutputStyle::Plain));
                                     }
                                 }
                                 if !out.stderr.is_empty() {
                                     let text = String::from_utf8_lossy(&out.stderr);
                                     for line in text.lines() {
-                                        self.output_lines.push((line.to_string(), false));
+                                        self.output_lines.push((line.to_string(), OutputStyle::Plain));
                                     }
                                 }
                             }
@@ -877,7 +983,7 @@ impl App {
                         }
                     }
                     Err(e) => {
-                        self.output_lines.push((format!("{}: {}", cmd, e), false));
+                        self.output_lines.push((format!("{}: {}", cmd, e), OutputStyle::Plain));
                         return;
                     }
                 }

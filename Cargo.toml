@@ -5,7 +5,7 @@ edition = "2024"
 
 [features]
 default = ["tui"]
-tui = ["ratatui", "crossterm"]
+tui = ["ratatui", "crossterm", "arboard"]
 
 [dependencies]
 pathsearch = "0.2.0"
@@ -14,3 +14,4 @@ rustyline = "18.0.0"
 shell-words = "1.1.1"
 ratatui = { version = "0.30", features = ["crossterm"], optional = true }
 crossterm = { version = "0.28", optional = true }
+arboard = { version = "3.4", optional = true }
