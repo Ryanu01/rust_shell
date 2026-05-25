@@ -192,7 +192,7 @@ curl -LO https://github.com/Ryanu01/rust_shell/releases/latest/download/rush-win
 Requires Rust 1.75+.
 
 ```sh
-cargo install --git https://github.com/Ryanu01/rush
+cargo install --git https://github.com/Ryanu01/rust_shell
 ```
 
 ### Build locally
