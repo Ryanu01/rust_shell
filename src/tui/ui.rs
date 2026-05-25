@@ -93,7 +93,7 @@ impl App {
                 ),
                 Line::raw(""),
                 Line::styled(
-                    "    Welcome to rush!",
+                    "    Welcome to rush! 🦀 >_",
                     Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
                 ),
                 Line::raw(""),
