@@ -157,26 +157,36 @@ All shell state is stored in `LazyLock<Mutex<...>>` statics (shared between TUI 
 ## Installation
 
 ### Pre-built binary (via GitHub Releases)
+## Linux (x86_64)
 
-**Linux (x86_64 / ARM64)**
 ```sh
-curl -LO https://github.com/Ryanu01/rush/releases/latest/download/rush.gz
-gunzip rush.gz && chmod +x rush && sudo mv rush /usr/local/bin/
+curl -LO https://github.com/Ryanu01/rust_shell/releases/latest/download/rush-linux-x86_64
+chmod +x rush-linux-x86_64
+sudo mv rush-linux-x86_64 /usr/local/bin/rush
 ```
 
-**macOS (Intel / Apple Silicon)**
+## Linux (ARM64)
+
 ```sh
-curl -LO https://github.com/Ryanu01/rush/releases/latest/download/rush.gz
-gunzip rush.gz && chmod +x rush && sudo mv rush /usr/local/bin/
+curl -LO https://github.com/Ryanu01/rust_shell/releases/latest/download/rush-linux-aarch64
+chmod +x rush-linux-aarch64
+sudo mv rush-linux-aarch64 /usr/local/bin/rush
 ```
 
-**Windows (x86_64)**
+## macOS (Intel)
+
+```sh
+curl -LO https://github.com/Ryanu01/rust_shell/releases/latest/download/rush-macos-x86_64
+chmod +x rush-macos-x86_64
+sudo mv rush-macos-x86_64 /usr/local/bin/rush
+```
+
+## Windows (x86_64)
+
 ```powershell
-curl -LO https://github.com/Ryanu01/rush/releases/latest/download/rush.exe.gz
-gunzip rush.exe.gz
-.\rush.exe
+curl -LO https://github.com/Ryanu01/rust_shell/releases/latest/download/rush-windows-x86_64.exe
+.\rush-windows-x86_64.exe
 ```
-
 ### From source
 
 Requires Rust 1.75+.
