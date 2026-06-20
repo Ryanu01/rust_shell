@@ -37,6 +37,11 @@ impl App {
             self.completions.clear();
         }
 
+        if self.search_mode {
+            self.handle_search_key(key);
+            return;
+        }
+
         match key.code {
             KeyCode::Char(c) => {
                 if key.modifiers == KeyModifiers::CONTROL {
@@ -46,11 +51,17 @@ impl App {
                             self.input.clear();
                             self.cursor = 0;
                             self.history_idx = None;
+                            self.search_mode = false;
+                            self.search_query.clear();
+                            self.search_match = None;
                         }
                         'd' => {
                             if self.input.is_empty() {
                                 self.running = false;
                             }
+                            self.search_mode = false;
+                            self.search_query.clear();
+                            self.search_match = None;
                         }
                         'u' => {
                             self.input.clear();
@@ -65,6 +76,15 @@ impl App {
                         }
                         'V' => {
                             self.paste_from_clipboard();
+                        }
+                        'r' => {
+                            if !self.history.is_empty() {
+                                self.search_mode = true;
+                                self.search_query.clear();
+                                self.search_match = None;
+                                self.input.clear();
+                                self.cursor = 0;
+                            }
                         }
                         _ => {}
                     }
@@ -419,6 +439,89 @@ impl App {
             Err(e) => self
                 .output_lines
                 .push((format!("Clipboard error: {}", e), OutputStyle::Plain)),
+        }
+    }
+
+    fn handle_search_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char(c) => {
+                if key.modifiers == KeyModifiers::CONTROL {
+                    match c {
+                        'c' | 'd' | 'g' => {
+                            self.search_mode = false;
+                            self.search_query.clear();
+                            self.search_match = None;
+                            self.input.clear();
+                            self.cursor = 0;
+                        }
+                        'r' => {
+                            self.search_next();
+                        }
+                        _ => {}
+                    }
+                } else if key.modifiers == KeyModifiers::SHIFT && c == 'R' {
+                    self.search_next();
+                } else {
+                    if c == '\x7f' || c == '\x08' {
+                        self.search_query.pop();
+                    } else {
+                        self.search_query.push(c);
+                    }
+                    self.search_find();
+                }
+            }
+            KeyCode::Backspace => {
+                self.search_query.pop();
+                self.search_find();
+            }
+            KeyCode::Enter => {
+                self.search_mode = false;
+                if let Some(idx) = self.search_match {
+                    self.input = self.history[idx].clone();
+                    self.cursor = self.input.len();
+                }
+                self.search_query.clear();
+                self.search_match = None;
+            }
+            KeyCode::Esc => {
+                self.search_mode = false;
+                self.search_query.clear();
+                self.search_match = None;
+                self.input.clear();
+                self.cursor = 0;
+            }
+            _ => {}
+        }
+    }
+
+    fn search_find(&mut self) {
+        if self.search_query.is_empty() {
+            self.search_match = None;
+            return;
+        }
+        for (i, entry) in self.history.iter().enumerate().rev() {
+            if entry.contains(&self.search_query) {
+                self.search_match = Some(i);
+                self.input = entry.clone();
+                self.cursor = self.input.len();
+                return;
+            }
+        }
+        self.search_match = None;
+    }
+
+    fn search_next(&mut self) {
+        if self.search_query.is_empty() {
+            return;
+        }
+        let start = self.search_match.map(|i| i.saturating_sub(1)).unwrap_or(self.history.len().saturating_sub(1));
+        for i in (0..=start).rev() {
+            if self.history[i].contains(&self.search_query) {
+                self.search_match = Some(i);
+                self.input = self.history[i].clone();
+                self.cursor = self.input.len();
+                return;
+            }
         }
     }
 }

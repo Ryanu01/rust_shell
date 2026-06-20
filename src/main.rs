@@ -2,6 +2,7 @@ mod helper;
 #[cfg(feature = "tui")]
 mod tui;
 mod utils;
+mod config;
 #[cfg(feature = "dsa")]
 mod dsa;
 use helper::ShellCompleter;
@@ -41,13 +42,15 @@ pub(crate) static COMPLETION_SPEC: LazyLock<Mutex<HashMap<String, String>>> =
 
 pub(crate) static JOBS: LazyLock<Mutex<Vec<Job>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 fn main() {
-    let config = Config::builder()
+    config::load_config();
+
+    let rl_config = Config::builder()
         .completion_type(CompletionType::List)
         .edit_mode(EditMode::Emacs)
         .build();
 
     let mut last_appended: usize = 0;
-    let mut rl = Editor::<ShellCompleter, DefaultHistory>::with_config(config).unwrap();
+    let mut rl = Editor::<ShellCompleter, DefaultHistory>::with_config(rl_config).unwrap();
     rl.set_helper(Some(ShellCompleter {
         last_completed: RefCell::new(String::new()),
     }));
@@ -470,6 +473,31 @@ pub(crate) fn is_builtin(cmd: &str) -> bool {
     BUILTINS.contains(&cmd)
 }
 
+pub(crate) fn find_closest(cmd: &str) -> Option<String> {
+    let mut candidates = BUILTINS.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    if let Ok(path_var) = env::var("PATH") {
+        for path in env::split_paths(&path_var) {
+            if let Ok(entries) = fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        candidates.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    let cmd_lower = cmd.to_lowercase();
+    let mut best: Option<(String, usize)> = None;
+    for c in &candidates {
+        let c_lower = c.to_lowercase();
+        let dist = strsim::levenshtein(&cmd_lower, &c_lower);
+        if dist <= 2 && dist < best.as_ref().map(|(_, d)| *d).unwrap_or(usize::MAX) {
+            best = Some((c.clone(), dist));
+        }
+    }
+    best.map(|(s, _)| s)
+}
+
 fn execute_builtin(cmd: &str, args: Vec<&str>, writer: &mut dyn Write) {
     match cmd {
         "echo" => cmd_echo(args, writer),
@@ -485,7 +513,11 @@ fn execute_builtin(cmd: &str, args: Vec<&str>, writer: &mut dyn Write) {
 fn run_pipeline(segments: Vec<Vec<&str>>, writer: &mut dyn Write) {
     for segment in &segments {
         if !is_builtin(segment[0]) && find_executable_in_path(segment[0]).is_none() {
-            writeln!(writer, "{}: command not found", segment[0]).unwrap();
+            let suggestion = find_closest(segment[0]);
+            match suggestion {
+                Some(s) => writeln!(writer, "{}: command not found, did you mean `{}`?", segment[0], s).unwrap(),
+                None => writeln!(writer, "{}: command not found", segment[0]).unwrap(),
+            }
             return;
         }
     }
@@ -599,7 +631,11 @@ fn run_external_cmd(parts: Vec<&str>, background: bool, writer: &mut dyn Write) 
     let command = parts[0];
     let mut append = false;
     if find_executable_in_path(command).is_none() {
-        writeln!(writer, "{}: command not found", command).unwrap();
+        let suggestion = find_closest(command);
+        match suggestion {
+            Some(s) => writeln!(writer, "{}: command not found, did you mean `{}`?", command, s).unwrap(),
+            None => writeln!(writer, "{}: command not found", command).unwrap(),
+        }
         return;
     }
 

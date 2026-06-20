@@ -20,6 +20,9 @@ impl App {
             completions: Vec::new(),
             completion_start: 0,
             mouse_capture: true,
+            search_mode: false,
+            search_query: String::new(),
+            search_match: None,
         }
     }
 

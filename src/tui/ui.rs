@@ -163,21 +163,40 @@ impl App {
         }
 
         // Input bar
-        let prompt = "$ ";
-        let input_text = if self.input.is_empty() {
-            Line::raw(format!("{} ", prompt))
+        let input_text = if self.search_mode {
+            let prompt = format!("(reverse-i-search)`{}': ", self.search_query);
+            if self.input.is_empty() {
+                Line::raw(prompt)
+            } else {
+                Line::from(vec![
+                    Span::styled(prompt, Style::default().fg(Color::Yellow)),
+                    Span::styled(&self.input, Style::default().fg(Color::White)),
+                ])
+            }
         } else {
-            let before = &self.input[..self.cursor];
-            let after = &self.input[self.cursor..];
-            Line::from(vec![
-                Span::raw(prompt),
-                Span::raw(before),
-                Span::styled(
+            let prompt = "$ ";
+            if self.input.is_empty() {
+                Line::raw(format!("{} ", prompt))
+            } else {
+                let before = &self.input[..self.cursor];
+                let after = &self.input[self.cursor..];
+
+                let mut spans = vec![
+                    Span::styled(prompt, Style::default().fg(Color::Green)),
+                ];
+                if !before.is_empty() {
+                    let highlighted = highlight_input(before);
+                    spans.extend(highlighted);
+                }
+                spans.push(Span::styled(
                     if after.is_empty() { " " } else { &after[..1] },
                     Style::default().bg(Color::Rgb(100, 100, 100)).fg(Color::White),
-                ),
-                Span::raw(if after.is_empty() { "" } else { &after[1..] }),
-            ])
+                ));
+                if !after.is_empty() {
+                    spans.push(Span::styled(&after[1..], Style::default().fg(Color::White)));
+                }
+                Line::from(spans)
+            }
         };
 
         let input_block = Block::default()
@@ -187,11 +206,73 @@ impl App {
         let input_para = Paragraph::new(input_text).block(input_block);
         frame.render_widget(input_para, input_area);
 
-        let cursor_x = input_area.x + 1 + prompt.len() as u16 + self.cursor as u16;
+        let cursor_x = if self.search_mode {
+            let prompt_len = format!("(reverse-i-search)`{}': ", self.search_query).len();
+            input_area.x + 1 + prompt_len.min(self.input.len()) as u16
+        } else {
+            input_area.x + 1 + 2 + self.cursor as u16
+        };
         let cursor_y = input_area.y + 1;
         frame.set_cursor_position((
             cursor_x.min(input_area.x + input_area.width.saturating_sub(2)),
             cursor_y,
         ));
     }
+}
+
+fn is_builtin(cmd: &str) -> bool {
+    crate::BUILTINS.contains(&cmd)
+}
+
+fn is_executable_in_path(name: &str) -> bool {
+    pathsearch::find_executable_in_path(name).is_some()
+}
+
+fn word_style(word: &str, is_first: bool) -> Style {
+    if is_first {
+        if is_builtin(word) {
+            Style::default().fg(Color::Cyan)
+        } else if is_executable_in_path(word) {
+            Style::default().fg(Color::Green)
+        } else {
+            Style::default().fg(Color::White)
+        }
+    } else if word == "|" || word == "&" || word == ">" || word == ">>" || word == "2>" || word == "2>>" {
+        Style::default().fg(Color::Magenta)
+    } else if word.starts_with('-') {
+        Style::default().fg(Color::Yellow)
+    } else if word.parse::<f64>().is_ok() {
+        Style::default().fg(Color::Red)
+    } else if word.starts_with('"') || word.starts_with('\'') {
+        Style::default().fg(Color::Rgb(255, 165, 0))
+    } else {
+        Style::default().fg(Color::White)
+    }
+}
+
+fn highlight_input(input: &str) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut word = String::new();
+    let mut word_start = 0;
+    let chars: Vec<char> = input.chars().collect();
+
+    for (i, &c) in chars.iter().enumerate() {
+        if c == ' ' {
+            if !word.is_empty() {
+                let style = word_style(&word, word_start == 0);
+                spans.push(Span::styled(word.clone(), style));
+                word.clear();
+            }
+            spans.push(Span::raw(" "));
+            word_start = i + 1;
+        } else {
+            word.push(c);
+        }
+    }
+    if !word.is_empty() {
+        let style = word_style(&word, word_start == 0);
+        spans.push(Span::styled(word, style));
+    }
+
+    spans
 }

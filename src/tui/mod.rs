@@ -38,4 +38,7 @@ pub struct App {
     pub(crate) completions: Vec<String>,
     pub(crate) completion_start: usize,
     pub(crate) mouse_capture: bool,
+    pub(crate) search_mode: bool,
+    pub(crate) search_query: String,
+    pub(crate) search_match: Option<usize>,
 }

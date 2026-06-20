@@ -191,14 +191,27 @@ impl App {
                 }
                 if !out.status.success() && out.stdout.is_empty() && out.stderr.is_empty() {
                     self.output_lines.push((
-                        format!("{}: command not found", command),
+                        match crate::find_closest(command) {
+                            Some(s) => format!("{}: command not found, did you mean `{}`?", command, s),
+                            None => format!("{}: command not found", command),
+                        },
                         OutputStyle::Plain,
                     ));
                 }
             }
             Err(e) => {
-                self.output_lines
-                    .push((format!("{}: {}", command, e), OutputStyle::Plain));
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    self.output_lines.push((
+                        match crate::find_closest(command) {
+                            Some(s) => format!("{}: command not found, did you mean `{}`?", command, s),
+                            None => format!("{}: command not found", command),
+                        },
+                        OutputStyle::Plain,
+                    ));
+                } else {
+                    self.output_lines
+                        .push((format!("{}: {}", command, e), OutputStyle::Plain));
+                }
             }
         }
     }
@@ -226,8 +239,18 @@ impl App {
                     .push((format!("[{}] {}", job_id, pid), OutputStyle::Plain));
             }
             Err(e) => {
-                self.output_lines
-                    .push((format!("{}: {}", command, e), OutputStyle::Plain));
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    self.output_lines.push((
+                        match crate::find_closest(command) {
+                            Some(s) => format!("{}: command not found, did you mean `{}`?", command, s),
+                            None => format!("{}: command not found", command),
+                        },
+                        OutputStyle::Plain,
+                    ));
+                } else {
+                    self.output_lines
+                        .push((format!("{}: {}", command, e), OutputStyle::Plain));
+                }
             }
         }
     }
@@ -251,7 +274,10 @@ impl App {
                     .is_err()
                 {
                     self.output_lines.push((
-                        format!("{}: command not found", segment[0]),
+                        match crate::find_closest(segment[0]) {
+                            Some(s) => format!("{}: command not found, did you mean `{}`?", segment[0], s),
+                            None => format!("{}: command not found", segment[0]),
+                        },
                         OutputStyle::Plain,
                     ));
                     return;
