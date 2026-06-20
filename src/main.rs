@@ -1,7 +1,9 @@
 mod helper;
-mod utils;
 #[cfg(feature = "tui")]
 mod tui;
+mod utils;
+#[cfg(feature = "dsa")]
+mod dsa;
 use helper::ShellCompleter;
 
 use rustyline::history::History;
@@ -56,6 +58,12 @@ fn main() {
         let _ = rl.load_history(path);
     }
 
+    #[cfg(feature = "dsa")]
+    if std::env::args().any(|a| a == "--dsa" || a == "--learn") {
+        let _ = dsa::run();
+        return;
+    }
+
     #[cfg(feature = "tui")]
     if !std::env::args().any(|a| a == "--no-tui") {
         let mut app = tui::App::new();
@@ -72,7 +80,13 @@ fn main() {
             Ok(line) => {
                 rl.add_history_entry(line.as_str()).unwrap();
                 let mut stdout = io::stdout().lock();
-                read_input(line.trim(), &mut rl, &mut last_appended, &hist_file, &mut stdout);
+                read_input(
+                    line.trim(),
+                    &mut rl,
+                    &mut last_appended,
+                    &hist_file,
+                    &mut stdout,
+                );
             }
             Err(ReadlineError::Interrupted) => {
                 if let Some(ref path) = hist_file {
@@ -158,8 +172,7 @@ fn read_input(
 
 pub(crate) fn expand_vars(parts: Vec<String>) -> Vec<String> {
     let store = STORE.lock().unwrap();
-    let re =
-        regex::Regex::new(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*").unwrap();
+    let re = regex::Regex::new(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*").unwrap();
     parts
         .into_iter()
         .map(|part| {
@@ -697,3 +710,4 @@ pub(crate) fn cmd_cd(args: Vec<&str>, writer: &mut dyn Write) {
         writeln!(writer, "cd: {}: No such file or directory", target).unwrap();
     }
 }
+
