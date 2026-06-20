@@ -72,6 +72,57 @@ rush --no-tui     # falls back to classic rustyline REPL
 - Status bar showing `cwd`, background job count, and keybindings
 - Built-in `ls` command with colorized output
 
+### DSA Learning Mode
+
+Interactive sorting algorithm visualizer. Launch with:
+
+```
+rush --dsa               # start DSA learning mode
+rush --learn             # same as --dsa
+```
+
+**Visualization:**
+- Elements displayed as a colored box grid `[ XX ]`
+- Green = sorted position, Red = currently compared, Yellow = being swapped
+- Label row shows `CMP`, `SWAP`, or index for each element
+- Stats panel tracks comparisons, swaps, steps, and complexity info for 6 sorting algorithms
+
+**Custom array input:**
+1. Press `Enter` on the visualizer → prompts for array size (2-20)
+2. Enter size, press `Enter` → prompts for space-separated values
+3. Enter matching values, press `Enter` → visualizer runs on your data
+4. `Esc` at any point cancels back to the visualizer
+
+**Compare mode:**
+1. On the topic menu, press `c` to enter compare selection
+2. Pick first algorithm (Enter), then second algorithm (Enter)
+3. Side-by-side view shows both algorithms running on the same array
+4. Bottom bar auto-determines the winner by time complexity
+
+| Key (Visualizer) | Action |
+|------------------|--------|
+| `←` / `→` | Step backward / forward |
+| `Space` | Step forward |
+| `r` | Reset with new random array |
+| `Enter` | Custom array input |
+| `m` | Back to menu |
+| `q` / `Esc` | Quit |
+
+| Key (Compare) | Action |
+|---------------|--------|
+| `←` / `→` | Step both algorithms |
+| `Space` | Step forward |
+| `r` | Reset with new random array |
+| `m` | Back to menu |
+| `q` | Quit |
+
+| Key (Menu) | Action |
+|------------|--------|
+| `↑` / `↓` | Navigate |
+| `Enter` | Select algorithm |
+| `c` | Toggle compare selection mode |
+| `q` / `Esc` | Quit / Cancel |
+
 ### Variable Expansion
 
 - `$NAME` and `${NAME}` syntax
@@ -123,6 +174,14 @@ tui/                          ─ TUI mode modules (feature = "tui")
 
 helper.rs                     ─ rustyline Completer implementation
 utils.rs                      ─ File path completion utilities
+
+dsa/                          ─ DSA learning mode (feature = "dsa")
+├── mod.rs                    ─ Step type, DsaApp state, pub fn run()
+├── app.rs                    ─ App state, random array generation, compare setup
+├── ui.rs                     ─ Ratatui rendering: menu, visualizer, compare, input screens
+├── input.rs                  ─ Key handling for all screens
+├── sorting.rs                ─ Step generators for 6 algorithms
+└── topics.rs                 ─ Topic definitions with complexity metadata
 ```
 
 ### Global State
@@ -149,6 +208,7 @@ All shell state is stored in `LazyLock<Mutex<...>>` statics (shared between TUI 
 | `shell-words` | POSIX shell word splitting (quote-aware) |
 | `pathsearch` | `PATH` lookup for executables |
 | `regex` | Variable name pattern matching in expansion |
+| `rand` | Random array generation for DSA mode |
 | `anyhow` / `thiserror` | Error handling |
 | `bytes` | Buffer management |
 | `ratatui` / `crossterm` | TUI rendering and terminal I/O (feature `tui`) |
@@ -200,7 +260,9 @@ cargo install --git https://github.com/Ryanu01/rust_shell
 ```sh
 cargo build --release                     # includes TUI via default features
 cargo build --release --no-default-features  # REPL-only, no TUI
-./target/release/rush
+cargo build --release --features dsa       # includes TUI + DSA learning mode
+./target/release/rush                     # normal shell
+./target/release/rush --dsa               # DSA learning mode
 ```
 ## Want to know more
 
