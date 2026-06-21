@@ -51,7 +51,7 @@ jobs:
           echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --features dsa --target ${{ matrix.target }}
 
       - name: Rename binary
         shell: bash
