@@ -72,6 +72,49 @@ rush --no-tui     # falls back to classic rustyline REPL
 - Status bar showing `cwd`, background job count, and keybindings
 - Built-in `ls` command with colorized output
 
+### RushBeats Music Player
+
+A terminal-based music player that searches YouTube, streams/downloads audio via `mpv` + `yt-dlp`, and manages local playlists. Launch with:
+
+```
+rush --music
+```
+
+**Features:**
+
+- YouTube search via `yt-dlp` with configurable cookie support (off/auto/manual)
+- Audio playback via `mpv` through Unix socket IPC (`/tmp/rushbeats_mpv.sock`)
+- Playlist management: create, delete, rename, add/remove songs
+- YouTube playlist import by URL (press `a` in playlists view)
+- Download queue: download songs as MP3 (requires `ffmpeg`)
+- Shuffle mode, repeat modes (OFF / ALL / ONE)
+- Persistent config, playlists, download queue, and session in `~/.rushbeats/`
+- Settings menu (press `S`): download path, seek step, cookies, browser, max results
+
+**Key bindings:**
+
+| Key | Action |
+|-----|--------|
+| `/` or `s` | Search YouTube |
+| `Enter` | Play selected |
+| `Space` | Pause/Resume |
+| `n` / `p` | Next / Previous track |
+| `x` | Stop playback |
+| `R` | Toggle shuffle |
+| `L` | Cycle repeat (OFF→ALL→ONE) |
+| `←` / `→` | Seek backward/forward |
+| `f` | Open playlists |
+| `c` | Create playlist |
+| `a` (playlists) | Import YouTube playlist |
+| `d` | Download song |
+| `a` (search/songs) | Add song to playlist |
+| `S` | Settings |
+| `h` / `?` | Help |
+| `q` (home) | Quit |
+| `Esc` | Back one view |
+
+**Required runtime dependencies:** `mpv`, `yt-dlp`. Optional: `ffmpeg` + `ffprobe` for downloads.
+
 ### DSA Learning Mode
 
 Interactive sorting algorithm visualizer. Launch with:
@@ -175,6 +218,13 @@ tui/                          ─ TUI mode modules (feature = "tui")
 helper.rs                     ─ rustyline Completer implementation
 utils.rs                      ─ File path completion utilities
 
+music/                        ─ RushBeats music player (feature = "music")
+├── mod.rs                    ─ pub fn run(), module exports
+├── app.rs                    ─ MusicApp struct, config, playlists, JSON persistence
+├── ui.rs                     ─ Ratatui rendering: search, playlists, settings, help
+├── input.rs                  ─ Key handling for all music views
+└── player.rs                 ─ mpv IPC, yt-dlp search, download queue, YouTube import
+
 dsa/                          ─ DSA learning mode (feature = "dsa")
 ├── mod.rs                    ─ Step type, DsaApp state, pub fn run()
 ├── app.rs                    ─ App state, random array generation, compare setup
@@ -213,6 +263,7 @@ All shell state is stored in `LazyLock<Mutex<...>>` statics (shared between TUI 
 | `bytes` | Buffer management |
 | `ratatui` / `crossterm` | TUI rendering and terminal I/O (feature `tui`) |
 | `arboard` | Clipboard access in TUI mode (feature `tui`) |
+| `serde` / `serde_json` | Config and playlist persistence (feature `music`) |
 
 ## Installation
 
@@ -261,8 +312,10 @@ cargo install --git https://github.com/Ryanu01/rust_shell
 cargo build --release                     # includes TUI via default features
 cargo build --release --no-default-features  # REPL-only, no TUI
 cargo build --release --features dsa       # includes TUI + DSA learning mode
+cargo build --release --features music     # includes TUI + RushBeats music player
 ./target/release/rush                     # normal shell
 ./target/release/rush --dsa               # DSA learning mode
+./target/release/rush --music             # RushBeats music player
 ```
 ## Want to know more
 

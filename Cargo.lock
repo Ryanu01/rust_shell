@@ -1430,6 +1430,8 @@ dependencies = [
  "ratatui",
  "regex",
  "rustyline",
+ "serde",
+ "serde_json",
  "shell-words",
  "strsim",
 ]

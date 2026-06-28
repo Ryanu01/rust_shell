@@ -5,6 +5,8 @@ mod utils;
 mod config;
 #[cfg(feature = "dsa")]
 mod dsa;
+#[cfg(feature = "music")]
+mod music;
 use helper::ShellCompleter;
 
 use rustyline::history::History;
@@ -64,6 +66,12 @@ fn main() {
     #[cfg(feature = "dsa")]
     if std::env::args().any(|a| a == "--dsa" || a == "--learn") {
         let _ = dsa::run();
+        return;
+    }
+
+    #[cfg(feature = "music")]
+    if std::env::args().any(|a| a == "--music") {
+        let _ = music::run();
         return;
     }
 
