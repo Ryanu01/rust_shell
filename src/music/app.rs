@@ -170,6 +170,9 @@ pub(crate) struct MusicApp {
 
     pub(crate) url_input_active: bool,
     pub(crate) url_buffer: String,
+
+    pub(crate) playlist_rename_active: bool,
+    pub(crate) playlist_rename_buf: String,
 }
 
 impl MusicApp {
@@ -246,6 +249,9 @@ impl MusicApp {
 
             url_input_active: false,
             url_buffer: String::new(),
+
+            playlist_rename_active: false,
+            playlist_rename_buf: String::new(),
         };
 
         app.load_config();
@@ -608,15 +614,22 @@ impl MusicApp {
         if self.playlist_selected >= self.playlist_count {
             return;
         }
+        let new_name = self.playlist_rename_buf.trim().to_string();
+        if new_name.is_empty() {
+            self.set_status("Name cannot be empty");
+            return;
+        }
         let old_filename = self.playlists[self.playlist_selected].filename.clone();
-        let new_name = format!("{}_renamed", self.playlists[self.playlist_selected].name);
         let new_filename = format!("{}.json", Self::sanitize_filename(&new_name));
-        let _ = fs::rename(
-            self.playlists_dir.join(&old_filename),
-            self.playlists_dir.join(&new_filename),
-        );
+        if old_filename != new_filename {
+            let _ = fs::rename(
+                self.playlists_dir.join(&old_filename),
+                self.playlists_dir.join(&new_filename),
+            );
+        }
         self.playlists[self.playlist_selected].name = new_name;
         self.playlists[self.playlist_selected].filename = new_filename;
+        self.playlist_rename_active = false;
         self.save_playlists();
         self.set_status("Playlist renamed");
     }

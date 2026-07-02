@@ -15,6 +15,11 @@ impl MusicApp {
     }
 
     fn on_key(&mut self, code: KeyCode) {
+        if self.playlist_rename_active {
+            self.handle_playlist_rename_key(code);
+            return;
+        }
+
         if self.query_active {
             self.handle_query_key(code);
             return;
@@ -81,7 +86,12 @@ impl MusicApp {
                     }
                 }
                 'c' if self.view == View::Playlists => self.create_playlist(),
-                'e' if self.view == View::Playlists => self.rename_playlist(),
+                'e' if self.view == View::Playlists => {
+                    if self.playlist_selected < self.playlist_count {
+                        self.playlist_rename_active = true;
+                        self.playlist_rename_buf = self.playlists[self.playlist_selected].name.clone();
+                    }
+                }
                 'x' if self.view == View::Playlists => self.delete_playlist(),
                 'X' if self.view == View::PlaylistSongs => self.remove_song_from_playlist(),
                 'u' if self.view == View::PlaylistSongs => {
@@ -457,6 +467,25 @@ impl MusicApp {
             KeyCode::Esc => {
                 self.url_input_active = false;
                 self.url_buffer.clear();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_playlist_rename_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Char(c) => {
+                self.playlist_rename_buf.push(c);
+            }
+            KeyCode::Enter => {
+                self.rename_playlist();
+            }
+            KeyCode::Backspace => {
+                self.playlist_rename_buf.pop();
+            }
+            KeyCode::Esc => {
+                self.playlist_rename_active = false;
+                self.playlist_rename_buf.clear();
             }
             _ => {}
         }

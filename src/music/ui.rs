@@ -49,7 +49,7 @@ impl MusicApp {
     fn draw_hints(&self, frame: &mut Frame, area: Rect) {
         let hints = match self.view {
             View::Search => " /s search  Enter play  Space pause  n/p next/prev  f playlists  d download  a add to playlist  S settings  h help  q quit",
-            View::Playlists => " Enter open  c create  a import YT playlist  x delete  Escape back  h help  q quit",
+            View::Playlists => " Enter open  c create  e rename  a import YT playlist  x delete  Escape back  h help  q quit",
             View::PlaylistSongs => " Enter play  d download  r rename  X remove  u sync yt  a add to playlist  Escape back  h help  q quit",
             View::AddToPlaylist => " Enter confirm  Escape cancel",
             View::Settings => " ↑↓ navigate  Enter edit  Escape back",
@@ -177,6 +177,30 @@ impl MusicApp {
     }
 
     fn draw_playlists_view(&self, frame: &mut Frame, area: Rect) {
+        if self.playlist_rename_active {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(3)])
+                .split(area);
+
+            self.draw_playlist_list(frame, chunks[0]);
+
+            let rename_text = if self.playlist_rename_buf.is_empty() {
+                format!("  New name: █")
+            } else {
+                format!("  New name: {}█", self.playlist_rename_buf)
+            };
+            frame.render_widget(
+                Paragraph::new(Line::styled(rename_text, Style::default().fg(Color::Yellow)))
+                    .block(Block::default().borders(Borders::ALL).title(" Rename Playlist ")),
+                chunks[1],
+            );
+        } else {
+            self.draw_playlist_list(frame, area);
+        }
+    }
+
+    fn draw_playlist_list(&self, frame: &mut Frame, area: Rect) {
         let mut lines: Vec<Line> = Vec::new();
         for (i, pl) in self.playlists.iter().enumerate() {
             if i >= self.playlist_count {
